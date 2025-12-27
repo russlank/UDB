@@ -63,24 +63,24 @@ The index file has the following layout:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     FILE HEADER                              │
-│  - Checksum (1 byte)                                         │
-│  - Number of indexes (2 bytes)                               │
+│                     FILE HEADER                             │
+│  - Checksum (1 byte)                                        │
+│  - Number of indexes (2 bytes)                              │
 ├─────────────────────────────────────────────────────────────┤
-│                   INDEX INFO [0]                             │
+│                   INDEX INFO [0]                            │
 │  - Checksum, KeyType, KeySize, MaxItems, etc.               │
 ├─────────────────────────────────────────────────────────────┤
-│                   INDEX INFO [1]                             │
-│  - (same structure)                                          │
+│                   INDEX INFO [1]                            │
+│  - (same structure)                                         │
 ├─────────────────────────────────────────────────────────────┤
-│                        ...                                   │
+│                        ...                                  │
 ├─────────────────────────────────────────────────────────────┤
-│                   INDEX INFO [N-1]                           │
+│                   INDEX INFO [N-1]                          │
 ├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│                    NODES AND LEAVES                          │
-│              (allocated and freed dynamically)               │
-│                                                              │
+│                                                             │
+│                    NODES AND LEAVES                         │
+│              (allocated and freed dynamically)              │
+│                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -127,17 +127,17 @@ Internal nodes store keys and pointers to children:
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│                      NODE HEADER                            │
-│  - Checksum (1 byte)                                        │
-│  - NumUsed (2 bytes)    - Number of items in use            │
-│  - NextNode (8 bytes)   - Next node at same level           │
-│  - PrevNode (8 bytes)   - Previous node at same level       │
+│                      NODE HEADER                           │
+│  - Checksum (1 byte)                                       │
+│  - NumUsed (2 bytes)    - Number of items in use           │
+│  - NextNode (8 bytes)   - Next node at same level          │
+│  - PrevNode (8 bytes)   - Previous node at same level      │
 ├────────────────────────────────────────────────────────────┤
-│ Item 1: [Key1][ChildPtr1]                                   │
-│ Item 2: [Key2][ChildPtr2]                                   │
-│ Item 3: [Key3][ChildPtr3]                                   │
-│ ...                                                         │
-│ Item N: [KeyN][ChildPtrN]                                   │
+│ Item 1: [Key1][ChildPtr1]                                  │
+│ Item 2: [Key2][ChildPtr2]                                  │
+│ Item 3: [Key3][ChildPtr3]                                  │
+│ ...                                                        │
+│ Item N: [KeyN][ChildPtrN]                                  │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -181,14 +181,14 @@ Leaves store a single key and point to the actual data:
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│                     LEAF HEADER                             │
-│  - Checksum (1 byte)                                        │
-│  - NextLeave (8 bytes)  - Next leaf (sequential access)     │
-│  - PrevLeave (8 bytes)  - Previous leaf                     │
-│  - DataPos (8 bytes)    - Position of actual data record    │
+│                     LEAF HEADER                            │
+│  - Checksum (1 byte)                                       │
+│  - NextLeave (8 bytes)  - Next leaf (sequential access)    │
+│  - PrevLeave (8 bytes)  - Previous leaf                    │
+│  - DataPos (8 bytes)    - Position of actual data record   │
 ├────────────────────────────────────────────────────────────┤
-│                      KEY DATA                               │
-│  - The actual key value (keySize bytes)                     │
+│                      KEY DATA                              │
+│  - The actual key value (keySize bytes)                    │
 └────────────────────────────────────────────────────────────┘
 ```
 
