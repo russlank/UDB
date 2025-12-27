@@ -14,6 +14,14 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "doc", "doc", "{703EBB9E-4B0
 		README.md = README.md
 	EndProjectSection
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "legacy-code", "legacy-code", "{1A9AF844-1928-41F4-B1F6-D9A036E6A471}"
+	ProjectSection(SolutionItems) = preProject
+		legacy-project\EMDX.H = legacy-project\EMDX.H
+		legacy-project\HFILE.H = legacy-project\HFILE.H
+		legacy-project\TEST.CPP = legacy-project\TEST.CPP
+		legacy-project\UDBASE.CPP = legacy-project\UDBASE.CPP
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
