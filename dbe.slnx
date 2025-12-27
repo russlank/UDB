@@ -1,0 +1,13 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/doc/">
+    <File Path="doc/architecture.md" />
+    <File Path="doc/btree.md" />
+    <File Path="doc/heap-file.md" />
+    <File Path="README.md" />
+  </Folder>
+  <Project Path="dbe/dbe.vcxproj" Id="55379065-d31a-4ab9-b340-d5b3c30c40f2" />
+</Solution>
