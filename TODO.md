@@ -2,15 +2,15 @@
 
 This document outlines planned improvements, potential enhancements, and areas where contributions are welcome.
 
-## ?? Current Status
+## 📊 Current Status
 
 **Version**: 2.1.0  
-**Test Status**: ? 45/45 tests passing (100%)  
+**Test Status**: ✅ 45/45 tests passing (100%)  
 **Last Updated**: 2025
 
 ---
 
-## ?? High Priority
+## 🔴 High Priority
 
 ### Performance Improvements
 
@@ -48,7 +48,7 @@ This document outlines planned improvements, potential enhancements, and areas w
 
 ---
 
-## ?? Medium Priority
+## 🟡 Medium Priority
 
 ### Heap File Improvements
 
@@ -106,7 +106,7 @@ This document outlines planned improvements, potential enhancements, and areas w
 
 ---
 
-## ?? Low Priority / Nice to Have
+## 🟢 Low Priority / Nice to Have
 
 ### Cross-Platform
 
@@ -170,22 +170,22 @@ This document outlines planned improvements, potential enhancements, and areas w
 
 ---
 
-## ?? Test Coverage Expansion
+## 🧪 Test Coverage Expansion
 
 ### Current Test Coverage
 
 | Category | Tests | Status |
 |----------|-------|--------|
-| B-Tree Construction | 4 | ? |
-| B-Tree Append | 4 | ? |
-| B-Tree Unique Keys | 3 | ? |
-| B-Tree Navigation | 4 | ? |
-| B-Tree Delete | 5 | ? |
-| B-Tree Multi-Index | 2 | ? |
-| B-Tree Thread Safety | 2 | ? |
-| B-Tree Edge Cases | 7 | ? |
-| B-Tree Persistence | 2 | ? |
-| File I/O | 12 | ? |
+| B-Tree Construction | 4 | ✅ |
+| B-Tree Append | 4 | ✅ |
+| B-Tree Unique Keys | 3 | ✅ |
+| B-Tree Navigation | 4 | ✅ |
+| B-Tree Delete | 5 | ✅ |
+| B-Tree Multi-Index | 2 | ✅ |
+| B-Tree Thread Safety | 2 | ✅ |
+| B-Tree Edge Cases | 7 | ✅ |
+| B-Tree Persistence | 2 | ✅ |
+| File I/O | 12 | ✅ |
 | **Total** | **45** | **100%** |
 
 ### Suggested Additional Tests
@@ -203,7 +203,7 @@ This document outlines planned improvements, potential enhancements, and areas w
 
 ---
 
-## ??? Architectural Improvements
+## 🏗️ Architectural Improvements
 
 ### Code Quality
 
@@ -229,7 +229,7 @@ This document outlines planned improvements, potential enhancements, and areas w
 
 ---
 
-## ?? Known Issues to Monitor
+## 🐛 Known Issues to Monitor
 
 1. **Recursive mutex overhead**: Current design uses recursive mutex which has higher overhead than non-recursive. Consider refactoring internal methods to avoid re-entrant locking.
 
@@ -239,7 +239,7 @@ This document outlines planned improvements, potential enhancements, and areas w
 
 ---
 
-## ?? How to Contribute
+## 🤝 How to Contribute
 
 1. Pick an item from this list (or propose a new one)
 2. Open an issue to discuss the approach
@@ -258,12 +258,12 @@ This document outlines planned improvements, potential enhancements, and areas w
 
 ---
 
-## ?? Version History
+## 📝 Version History
 
 ### v2.1.0 (Current)
-- ? Fixed `binarySearchNode()` returning wrong position for keys > all existing keys
-- ? Fixed UNIQUE attribute check using wrong bitwise operator
-- ? All 45 unit tests passing
+- ✅ Fixed `binarySearchNode()` returning wrong position for keys > all existing keys
+- ✅ Fixed UNIQUE attribute check using wrong bitwise operator
+- ✅ All 45 unit tests passing
 
 ### v2.0.0
 - Initial modernization from DOS/Windows 3.1 to C++20
