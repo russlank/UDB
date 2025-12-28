@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file udb_heap.cpp
  * @brief Implementation of the HeapFile class for dynamic record storage
  *

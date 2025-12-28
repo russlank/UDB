@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file udb_btree.cpp
  * @brief Implementation of the B-Tree index for the UDB library
  *
@@ -6,7 +6,7 @@
  * including all insert, delete, search, and navigation operations.
  *
  * @author Digixoil
- * @version 2.0.0
+ * @version 2.1.0
  */
 
 #include "udb_btree.h"

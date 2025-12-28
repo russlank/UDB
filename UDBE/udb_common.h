@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file udb_common.h
  * @brief Common definitions, types, and utilities for the UDB library
  *
@@ -42,7 +42,7 @@
  * 4. Pre-allocate nodes and leaves to reduce file growth operations
  *
  * @author Digixoil
- * @version 2.0.0 (Modernized for Visual Studio 2025)
+ * @version 2.1.0 (Modernized for Visual Studio 2025)
  * @date 2025
  *
  * @see udb_file.h for file I/O abstraction

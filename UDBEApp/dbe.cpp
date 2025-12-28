@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file test_main.cpp
  * @brief Test application for the UDB library
  *
@@ -6,7 +6,7 @@
  * the B-Tree index functionality, similar to the original TEST.CPP.
  *
  * @author Digixoil
- * @version 2.0.0
+ * @version 2.1.0
  */
 
 #include "udb.h"

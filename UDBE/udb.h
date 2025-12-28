@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file udb.h
  * @brief Main include file for the UDB (Ultra Database) library
  *
@@ -44,7 +44,7 @@
  * ```
  *
  * @author Digixoil
- * @version 2.0.0 (Modernized for Visual Studio 2025)
+ * @version 2.1.0 (Modernized for Visual Studio 2025)
  * @date 2025
  */
 
@@ -72,13 +72,13 @@ namespace udb {
         static constexpr int MAJOR = 2;
         static constexpr int MINOR = 0;
         static constexpr int PATCH = 0;
-        static constexpr const char* STRING = "2.0.0";
+        static constexpr const char* STRING = "2.1.0";
         static constexpr const char* NAME = "UDB - Ultra Database Engine";
     };
 
     /**
      * @brief Get library version string
-     * @return Version string (e.g., "2.0.0")
+     * @return Version string (e.g., "2.1.0")
      */
     inline const char* getVersion() {
         return Version::STRING;

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file udb_btree.h
  * @brief B-Tree index implementation for the UDB library
  *

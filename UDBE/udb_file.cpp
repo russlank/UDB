@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file udb_file.cpp
  * @brief Implementation of the File class for low-level file I/O
  *
