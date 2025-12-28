@@ -1,9 +1,20 @@
-/**
+﻿/**
  * @file udb_file.cpp
  * @brief Implementation of the File class for low-level file I/O
  *
+ * This file contains the thread-safe implementation of basic file operations
+ * including read, write, seek, and position tracking.
+ *
+ * ## Thread Safety Implementation
+ *
+ * All public methods acquire the recursive mutex before accessing file state.
+ * This ensures:
+ * - No data races on the file handle
+ * - Atomic seek+read and seek+write operations
+ * - Safe concurrent access from multiple threads
+ *
  * @author Digixoil
- * @version 2.0.0
+ * @version 2.1.0 (Thread Safety Enhancement)
  */
 
 #include "udb_file.h"
@@ -75,7 +86,7 @@ namespace udb {
     void File::close()
     {
         if (m_isOpen) {
-            std::lock_guard<std::mutex> lock(m_mutex);
+            LockGuard lock(m_mutex);
             if (m_file.is_open()) {
                 m_file.close();
             }
@@ -85,13 +96,13 @@ namespace udb {
 
     int64_t File::position() const
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        LockGuard lock(m_mutex);
         return static_cast<int64_t>(m_file.tellg());
     }
 
     int64_t File::size() const
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        LockGuard lock(m_mutex);
 
         // Save current position
         auto currentPos = m_file.tellg();
@@ -108,7 +119,7 @@ namespace udb {
 
     int64_t File::seek(int64_t pos, int origin)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        LockGuard lock(m_mutex);
 
         std::ios_base::seekdir dir;
         switch (origin) {
@@ -132,7 +143,7 @@ namespace udb {
 
     void File::write(const void* buffer, size_t size, int64_t pos)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        LockGuard lock(m_mutex);
 
         if (pos != INVALID_POSITION) {
             m_file.seekp(pos);
@@ -145,11 +156,14 @@ namespace udb {
             m_errorCode = ErrorCode::WRITE_ERROR;
             throw FileIOException(m_errorCode, "Write failed");
         }
+
+        // Flush to ensure data is visible to subsequent reads
+        m_file.flush();
     }
 
     size_t File::read(void* buffer, size_t size, int64_t pos)
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        LockGuard lock(m_mutex);
 
         if (pos != INVALID_POSITION) {
             m_file.seekg(pos);
@@ -171,12 +185,13 @@ namespace udb {
 
     void File::flush()
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        LockGuard lock(m_mutex);
         m_file.flush();
     }
 
     bool File::isOpen() const
     {
+        LockGuard lock(m_mutex);
         return m_isOpen && m_file.is_open();
     }
 

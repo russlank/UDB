@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file udb_common.h
  * @brief Common definitions, types, and utilities for the UDB library
  *

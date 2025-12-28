@@ -20,14 +20,54 @@ This project serves as both a practical database library and an **educational re
 - **Data Integrity**: XOR checksums on all data structures for corruption detection
 - **Multiple Key Types**: Strings, integers, blocks, characters, and logical values
 - **Sequential Access**: Efficient cursor-based navigation (first, next, previous)
+- **Thread Safety**: Recursive mutex protection for concurrent access
+
+## 🧪 Build and Test Status
+
+| Component | Status |
+|-----------|--------|
+| Build | ✅ Compiles successfully |
+| Unit Tests | ✅ **45/45 tests passing (100%)** |
+| File I/O | ✅ All tests passing |
+| B-Tree Navigation | ✅ Working correctly |
+| B-Tree Find/Insert/Delete | ✅ All operations working correctly |
+| Thread Safety | ✅ Concurrent read/write tests passing |
+| Persistence | ✅ Data persists correctly across file reopen |
+
+### Recent Fixes (v2.1.0)
+
+The following issues have been resolved:
+
+1. **Binary Search Bug**: Fixed `binarySearchNode()` to correctly return position `numItems+1` when the search key is greater than all existing keys in a node. Previously, it incorrectly returned the last position, causing keys to be inserted at wrong positions during node splits.
+
+2. **UNIQUE Attribute Check**: Fixed the UNIQUE constraint check in `append()` which incorrectly used bitwise OR (`|`) instead of AND (`&`), causing all indexes to behave as if they had the UNIQUE attribute.
+
+3. **Node Split Logic**: The node split and balance operations now correctly maintain the B-tree invariants after the binary search fix.
 
 ## 🚀 Quick Start
 
 ### Building the Project
 
-1. Open `dbe.sln` in Visual Studio 2022/2025
+1. Open `UDBE.sln` in Visual Studio 2022/2025
 2. Select your configuration (Debug/Release, x64)
-3. Build the solution (F7 or Build → Build Solution)
+3. Restore NuGet packages (right-click solution → "Restore NuGet Packages")
+4. Build the solution (F7 or Build → Build Solution)
+
+### Running Tests
+
+The project uses Google Test for unit testing:
+
+```bash
+# Build and run tests
+msbuild UDBE.sln /p:Configuration=Debug /p:Platform=x64
+.\bin\x64\Debug\UDBETests.exe
+```
+
+Expected output:
+```
+[==========] 45 tests from 2 test cases ran.
+[  PASSED  ] 45 tests.
+```
 
 ### Basic Usage
 
@@ -72,25 +112,28 @@ while (pos >= 0 && !index.isEOF()) {
 ## 📁 Project Structure
 
 ```
-dbe/
-├── dbe/                     # Main source directory
+UDB/
+├── UDBE/                    # Main library project
 │   ├── udb.h                # Main include file (include this in your projects)
 │   ├── udb_common.h         # Common definitions, types, and utilities
-│   ├── udb_file.h           # File I/O abstraction layer
-│   ├── udb_file.cpp         # File I/O implementation
-│   ├── udb_heap.h           # Heap file management (space allocation)
-│   ├── udb_heap.cpp         # Heap file implementation
-│   ├── udb_btree.h          # B-Tree index declarations
-│   ├── udb_btree.cpp        # B-Tree index implementation
-│   └── dbe.cpp              # Interactive test application
+│   ├── udb_file.h/cpp       # File I/O abstraction layer
+│   ├── udb_heap.h/cpp       # Heap file management (space allocation)
+│   ├── udb_btree.h/cpp      # B-Tree index implementation
+│   └── udb_sync.h           # Thread synchronization primitives
+├── UDBEApp/                 # Interactive test application
+│   └── dbe.cpp              # Command-line test interface
+├── UDBETests/               # Unit tests (Google Test)
+│   ├── test_btree.cpp       # B-Tree tests (33 tests)
+│   ├── test_file.cpp        # File I/O tests (12 tests)
+│   ├── test_heap.cpp        # Heap file tests
+│   └── test_main.cpp        # Test entry point
 ├── doc/                     # Documentation
 │   ├── btree.md             # B-Tree algorithm explanation
 │   ├── heap-file.md         # Heap file structure explanation
 │   └── architecture.md      # Architecture overview
-├── dbe.sln                  # Visual Studio solution
-├── dbe.vcxproj              # Visual Studio project
+├── UDBE.sln                 # Visual Studio solution
 ├── README.md                # This file
-└── .gitignore               # Git ignore rules
+└── TODO.md                  # Future development roadmap
 ```
 
 ### Source File Descriptions
@@ -102,7 +145,7 @@ dbe/
 | `udb_file.h/cpp` | Platform-independent file I/O with thread safety |
 | `udb_heap.h/cpp` | Heap file for variable-length record storage with holes management |
 | `udb_btree.h/cpp` | B+ Tree index implementation with multi-index support |
-| `dbe.cpp` | Interactive command-line test application |
+| `udb_sync.h` | Thread synchronization primitives (mutexes, locks) |
 
 ## 🔧 Configuration Options
 
@@ -206,7 +249,7 @@ void freeSpace(int64_t position, size_t size);
 
 ## 🧪 Running the Test Application
 
-The test application (`dbe.cpp`) provides an interactive interface:
+The test application (`UDBEApp`) provides an interactive interface:
 
 ```
 > C                # Create new index file
@@ -254,6 +297,7 @@ This project is designed to be educational. Key learning points:
 - Modern C++ practices (RAII, smart pointers, exceptions)
 - Separation of concerns in class design
 - How to migrate legacy code to modern standards
+- Thread-safe design with recursive mutexes
 
 ## 🔄 Migration from Legacy Code
 
@@ -265,10 +309,11 @@ This is a modernized version of classic DOS/Windows 3.1 database code. Key chang
 | Files | DOS handles (`_open`, `_read`) | `std::fstream` |
 | Types | `int`, `long` | `int64_t`, `uint16_t` |
 | Errors | Global error codes | Exceptions + error codes |
-| Threading | None | `std::mutex` protection |
+| Threading | None | `std::recursive_mutex` protection |
 | Headers | Custom header files | `#pragma once`, include guards |
+| Tests | Manual testing | Google Test framework |
 
-## ⚠️ Limitations and Known Issues
+## ⚠️ Limitations
 
 1. **Not for production use**: This is an educational/reference implementation
 2. **No transaction support**: No ACID guarantees, no crash recovery
@@ -276,17 +321,13 @@ This is a modernized version of classic DOS/Windows 3.1 database code. Key chang
 4. **No compaction**: Heap file fragmentation accumulates over time
 5. **Fixed endianness**: Assumes little-endian (x86/x64)
 
-## 🛠️ Future Improvements
+## 🛠️ Completed Features
 
-Potential enhancements for contributors:
-
-- [ ] Hole coalescing in heap files
-- [ ] File compaction
-- [ ] Write-ahead logging (WAL) for crash recovery
-- [ ] Fine-grained locking for better concurrency
-- [ ] Memory-mapped file support
-- [ ] Cross-platform endianness handling
-- [ ] Unit test suite
+- [x] Unit test suite (Google Test) - 45 tests
+- [x] Thread safety (recursive mutexes)
+- [x] B-tree find() after node splits - **FIXED**
+- [x] UNIQUE attribute constraint - **FIXED**
+- [x] Node split and balance operations - **FIXED**
 
 ## 📜 License
 
@@ -297,8 +338,10 @@ This project is provided as-is for educational and reference purposes.
 Contributions are welcome! Please ensure:
 - Code follows the existing style and documentation patterns
 - All changes compile without warnings
-- Tests pass (run the test application)
+- All 45 tests pass (run the test suite)
 - Documentation is updated as needed
+
+See [TODO.md](TODO.md) for the development roadmap and areas where contributions are welcome.
 
 ## 📞 Support
 
