@@ -27,15 +27,22 @@ This project serves as both a practical database library and an **educational re
 | Component | Status |
 |-----------|--------|
 | Build | ✅ Compiles successfully |
-| Unit Tests | ⚠️ 35/45 tests passing (78%) |
+| Unit Tests | ✅ **45/45 tests passing (100%)** |
 | File I/O | ✅ All tests passing |
 | B-Tree Navigation | ✅ Working correctly |
-| B-Tree Find after Splits | ⚠️ Known issues (see below) |
+| B-Tree Find/Insert/Delete | ✅ All operations working correctly |
+| Thread Safety | ✅ Concurrent read/write tests passing |
+| Persistence | ✅ Data persists correctly across file reopen |
 
-### Known Issues
+### Recent Fixes (v2.1.0)
 
-- **B-Tree find() after node splits**: When the tree grows beyond the initial node capacity (maxItems), the `find()` operation may fail to locate keys that were properly inserted. Navigation methods (`getFirst()`, `getNext()`) work correctly as they traverse the leaf chain directly.
-- **Affected tests**: AppendMultipleKeys, AppendIntegerKeys, AppendCausesSplit, LargeDataset, and related tests
+The following issues have been resolved:
+
+1. **Binary Search Bug**: Fixed `binarySearchNode()` to correctly return position `numItems+1` when the search key is greater than all existing keys in a node. Previously, it incorrectly returned the last position, causing keys to be inserted at wrong positions during node splits.
+
+2. **UNIQUE Attribute Check**: Fixed the UNIQUE constraint check in `append()` which incorrectly used bitwise OR (`|`) instead of AND (`&`), causing all indexes to behave as if they had the UNIQUE attribute.
+
+3. **Node Split Logic**: The node split and balance operations now correctly maintain the B-tree invariants after the binary search fix.
 
 ## 🚀 Quick Start
 
@@ -54,6 +61,12 @@ The project uses Google Test for unit testing:
 # Build and run tests
 msbuild UDBE.sln /p:Configuration=Debug /p:Platform=x64
 .\bin\x64\Debug\UDBETests.exe
+```
+
+Expected output:
+```
+[==========] 45 tests from 2 test cases ran.
+[  PASSED  ] 45 tests.
 ```
 
 ### Basic Usage
@@ -87,7 +100,7 @@ if (pos >= 0) {
     std::cout << "Found Bob at position " << pos << std::endl;
 }
 
-// Iterate through all records (recommended for reliability)
+// Iterate through all records
 char key[51];
 pos = index.getFirst(key);
 while (pos >= 0 && !index.isEOF()) {
@@ -110,8 +123,8 @@ UDB/
 ├── UDBEApp/                 # Interactive test application
 │   └── dbe.cpp              # Command-line test interface
 ├── UDBETests/               # Unit tests (Google Test)
-│   ├── test_btree.cpp       # B-Tree tests
-│   ├── test_file.cpp        # File I/O tests
+│   ├── test_btree.cpp       # B-Tree tests (33 tests)
+│   ├── test_file.cpp        # File I/O tests (12 tests)
 │   ├── test_heap.cpp        # Heap file tests
 │   └── test_main.cpp        # Test entry point
 ├── doc/                     # Documentation
@@ -119,7 +132,8 @@ UDB/
 │   ├── heap-file.md         # Heap file structure explanation
 │   └── architecture.md      # Architecture overview
 ├── UDBE.sln                 # Visual Studio solution
-└── README.md                # This file
+├── README.md                # This file
+└── TODO.md                  # Future development roadmap
 ```
 
 ### Source File Descriptions
@@ -196,7 +210,7 @@ bool deleteKey(const void* key);                 // Delete all entries with key
 int64_t deleteCurrent();                         // Delete current entry
 ```
 
-#### Navigation (Recommended for Iteration)
+#### Navigation
 
 ```cpp
 int64_t getFirst(void* key = nullptr);   // Move to first entry
@@ -299,28 +313,21 @@ This is a modernized version of classic DOS/Windows 3.1 database code. Key chang
 | Headers | Custom header files | `#pragma once`, include guards |
 | Tests | Manual testing | Google Test framework |
 
-## ⚠️ Limitations and Known Issues
+## ⚠️ Limitations
 
-1. **B-Tree find() after splits**: The `find()` operation may fail to locate keys after tree node splits. Use navigation methods (`getFirst`/`getNext`) for reliable iteration.
-2. **Not for production use**: This is an educational/reference implementation
-3. **No transaction support**: No ACID guarantees, no crash recovery
-4. **Basic thread safety**: Coarse-grained locking, not optimized for high concurrency
-5. **No compaction**: Heap file fragmentation accumulates over time
-6. **Fixed endianness**: Assumes little-endian (x86/x64)
+1. **Not for production use**: This is an educational/reference implementation
+2. **No transaction support**: No ACID guarantees, no crash recovery
+3. **Basic thread safety**: Coarse-grained locking, not optimized for high concurrency
+4. **No compaction**: Heap file fragmentation accumulates over time
+5. **Fixed endianness**: Assumes little-endian (x86/x64)
 
-## 🛠️ Future Improvements
+## 🛠️ Completed Features
 
-Potential enhancements for contributors:
-
-- [x] Unit test suite (Google Test)
+- [x] Unit test suite (Google Test) - 45 tests
 - [x] Thread safety (recursive mutexes)
-- [ ] Fix B-tree find() after node splits
-- [ ] Hole coalescing in heap files
-- [ ] File compaction
-- [ ] Write-ahead logging (WAL) for crash recovery
-- [ ] Fine-grained locking for better concurrency
-- [ ] Memory-mapped file support
-- [ ] Cross-platform endianness handling
+- [x] B-tree find() after node splits - **FIXED**
+- [x] UNIQUE attribute constraint - **FIXED**
+- [x] Node split and balance operations - **FIXED**
 
 ## 📜 License
 
@@ -331,16 +338,10 @@ This project is provided as-is for educational and reference purposes.
 Contributions are welcome! Please ensure:
 - Code follows the existing style and documentation patterns
 - All changes compile without warnings
-- Tests pass (run the test application)
+- All 45 tests pass (run the test suite)
 - Documentation is updated as needed
 
-### Debugging Tips
-
-If investigating the B-tree split issue:
-1. The problem manifests when inserting more keys than `maxItems` (default 5)
-2. Navigation tests pass because they use the leaf chain directly
-3. `find()` uses the node structure which may have inconsistent child pointers after splits
-4. The binary search in `binarySearchNode()` appears correct; issue likely in split/balance logic
+See [TODO.md](TODO.md) for the development roadmap and areas where contributions are welcome.
 
 ## 📞 Support
 
