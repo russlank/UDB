@@ -16,6 +16,53 @@
 namespace udb {
 
     //=============================================================================
+    // Binary Search Helper
+    //=============================================================================
+
+    /**
+     * @brief Binary search within a node to find insertion point
+     * 
+     * Finds the position where key should be inserted or where it exists.
+     * For B-tree semantics, we need to find the first key >= search key.
+     * 
+     * @param node The node to search
+     * @param key The key to find
+     * @param numItems Number of items in the node
+     * @return Pair of (position, exactMatch) where position is 1-based
+     */
+    inline std::pair<uint16_t, bool> MultiIndex::binarySearchNode(
+        const std::vector<uint8_t>& node, const void* key, uint16_t numItems) const
+    {
+        // Note: This is an internal method - caller must hold lock
+        if (numItems == 0) {
+            return { 1, false };
+        }
+
+        uint16_t left = 1;
+        uint16_t right = numItems;
+        
+        // Binary search to find the first position where nodeKey >= key
+        while (left < right) {
+            uint16_t mid = left + (right - left) / 2;
+            int cmp = compare(key, getNodeKey(node, mid));
+            
+            if (cmp <= 0) {
+                // key <= nodeKey[mid], search in left half (including mid)
+                right = mid;
+            } else {
+                // key > nodeKey[mid], search in right half (excluding mid)
+                left = mid + 1;
+            }
+        }
+        
+        // At this point, left is the position where key should be inserted
+        // Check if it's an exact match
+        int finalCmp = compare(key, getNodeKey(node, left));
+        
+        return { left, finalCmp == 0 };
+    }
+
+    //=============================================================================
     // IndexStack Implementation
     //=============================================================================
 
@@ -55,6 +102,7 @@ namespace udb {
         , m_indexInfo(numIndexes)
         , m_positions(numIndexes)
     {
+        // No lock needed - object is being constructed, not yet shared
         m_currentIndex = 0;
         m_header.numIndexes = numIndexes;
 
@@ -87,6 +135,7 @@ namespace udb {
     MultiIndex::MultiIndex(const std::string& filename)
         : File(filename, false)
     {
+        // No lock needed - object is being constructed, not yet shared
         readHeader();
         m_currentIndex = 0;
         m_indexInfo.resize(m_header.numIndexes);
@@ -106,6 +155,8 @@ namespace udb {
 
     MultiIndex::~MultiIndex()
     {
+        // Acquire lock to ensure no other operations are in progress
+        LockGuard lock(m_indexMutex);
         try {
             writeHeader();
             writeAllInfo();
@@ -205,6 +256,7 @@ namespace udb {
     void MultiIndex::initIndex(KeyType keyType, uint16_t keySize, IndexAttribute attributes,
         uint16_t numItems, int64_t freeCreateNodes, int64_t freeCreateLeaves)
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return;
 
         m_indexInfo[m_currentIndex].attributes = static_cast<uint16_t>(attributes);
@@ -227,6 +279,7 @@ namespace udb {
 
     void MultiIndex::setActiveIndex(uint16_t indexNo)
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return;
         if (indexNo > 0 && indexNo <= m_header.numIndexes) {
             m_currentIndex = indexNo - 1;
@@ -236,20 +289,29 @@ namespace udb {
         }
     }
 
+    uint16_t MultiIndex::getActiveIndex() const
+    {
+        LockGuard lock(m_indexMutex);
+        return m_currentIndex + 1;  // Return 1-based index
+    }
+
     KeyType MultiIndex::getKeyType() const
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return KeyType::VOID;
         return static_cast<KeyType>(m_indexInfo[m_currentIndex].keyType);
     }
 
     uint16_t MultiIndex::getKeySize() const
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return 0;
         return m_indexInfo[m_currentIndex].keySize;
     }
 
     bool MultiIndex::canDelete() const
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return false;
         return (m_indexInfo[m_currentIndex].attributes &
             static_cast<uint16_t>(IndexAttribute::ALLOW_DELETE)) != 0;
@@ -257,6 +319,7 @@ namespace udb {
 
     bool MultiIndex::isUnique() const
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return false;
         return (m_indexInfo[m_currentIndex].attributes &
             static_cast<uint16_t>(IndexAttribute::UNIQUE)) != 0;
@@ -264,12 +327,14 @@ namespace udb {
 
     void MultiIndex::flushIndex()
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return;
         writeHeader();
     }
 
     void MultiIndex::flushFile()
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return;
         writeAllInfo();
     }
@@ -692,11 +757,12 @@ namespace udb {
         }
         else {
             insertAt = itemNo;
-            // Shift items to make room
-            for (uint16_t i = numItems + 1; i > insertAt; --i) {
-                setNodeKey(node, i, getNodeKey(node, i - 1));
-                setChildPos(node, i, getChildPos(node, i - 1));
-            }
+            // Use memmove for efficient bulk shift
+            uint16_t itemSize = getItemSize();
+            uint8_t* dest = node.data() + sizeof(NodeHeader) + (itemSize * insertAt);
+            uint8_t* src = node.data() + sizeof(NodeHeader) + (itemSize * (insertAt - 1));
+            size_t bytesToMove = itemSize * (numItems - insertAt + 1);
+            std::memmove(dest, src, bytesToMove);
         }
 
         setNodeKey(node, insertAt, key);
@@ -708,11 +774,12 @@ namespace udb {
         uint16_t numItems = getNumItems(node);
 
         if (itemNo < numItems && itemNo > 0) {
-            // Shift items to fill the gap
-            for (uint16_t i = itemNo; i < numItems; ++i) {
-                setNodeKey(node, i, getNodeKey(node, i + 1));
-                setChildPos(node, i, getChildPos(node, i + 1));
-            }
+            // Use memmove for efficient bulk shift
+            uint16_t itemSize = getItemSize();
+            uint8_t* dest = node.data() + sizeof(NodeHeader) + (itemSize * (itemNo - 1));
+            uint8_t* src = node.data() + sizeof(NodeHeader) + (itemSize * itemNo);
+            size_t bytesToMove = itemSize * (numItems - itemNo);
+            std::memmove(dest, src, bytesToMove);
         }
 
         if (numItems > 0) {
@@ -726,6 +793,7 @@ namespace udb {
 
     void MultiIndex::resetPosition()
     {
+        // Internal method - caller must hold lock
         m_positions[m_currentIndex].currentLeave = INVALID_POSITION;
         m_positions[m_currentIndex].nextLeave = INVALID_POSITION;
         m_positions[m_currentIndex].prevLeave = INVALID_POSITION;
@@ -736,6 +804,7 @@ namespace udb {
     void MultiIndex::setPosition(int64_t currentLeave, int64_t nextLeave,
         int64_t prevLeave, int64_t dataPos)
     {
+        // Internal method - caller must hold lock
         m_positions[m_currentIndex].currentLeave = currentLeave;
         m_positions[m_currentIndex].nextLeave = nextLeave;
         m_positions[m_currentIndex].prevLeave = prevLeave;
@@ -759,41 +828,60 @@ namespace udb {
 
     void MultiIndex::setPositionFromLeave(int64_t leavePos, const std::vector<uint8_t>& leave)
     {
+        // Internal method - caller must hold lock
         setPosition(leavePos, getNextLeave(leave), getPrevLeave(leave), getDataPos(leave));
     }
 
     void MultiIndex::setEOF()
     {
+        // Internal method - caller must hold lock
         m_positions[m_currentIndex].state |= static_cast<uint16_t>(PositionState::END_OF_FILE);
     }
 
     void MultiIndex::resetEOF()
     {
+        // Internal method - caller must hold lock
         m_positions[m_currentIndex].state &= ~static_cast<uint16_t>(PositionState::END_OF_FILE);
     }
 
     void MultiIndex::setBOF()
     {
+        // Internal method - caller must hold lock
         m_positions[m_currentIndex].state |= static_cast<uint16_t>(PositionState::BEGIN_OF_FILE);
     }
 
     void MultiIndex::resetBOF()
     {
+        // Internal method - caller must hold lock
         m_positions[m_currentIndex].state &= ~static_cast<uint16_t>(PositionState::BEGIN_OF_FILE);
     }
 
-    bool MultiIndex::isEOF() const
+    bool MultiIndex::isEOFInternal() const
     {
+        // Internal method - caller must hold lock
         if (hasError()) return true;
         return (m_positions[m_currentIndex].state &
             static_cast<uint16_t>(PositionState::END_OF_FILE)) != 0;
     }
 
-    bool MultiIndex::isBOF() const
+    bool MultiIndex::isBOFInternal() const
     {
+        // Internal method - caller must hold lock
         if (hasError()) return true;
         return (m_positions[m_currentIndex].state &
             static_cast<uint16_t>(PositionState::BEGIN_OF_FILE)) != 0;
+    }
+
+    bool MultiIndex::isEOF() const
+    {
+        LockGuard lock(m_indexMutex);
+        return isEOFInternal();
+    }
+
+    bool MultiIndex::isBOF() const
+    {
+        LockGuard lock(m_indexMutex);
+        return isBOFInternal();
     }
 
     //=============================================================================
@@ -804,80 +892,60 @@ namespace udb {
     {
         if (hasError()) return 0;
 
-        int result = 0;
         KeyType kt = getKeyType();
 
         switch (kt) {
         case KeyType::BLOCK: {
-            const uint8_t* p1 = static_cast<const uint8_t*>(key1);
-            const uint8_t* p2 = static_cast<const uint8_t*>(key2);
-            for (uint16_t i = 0; i < getKeySize(); ++i) {
-                if (p1[i] != p2[i]) {
-                    result = (p1[i] > p2[i]) ? 1 : -1;
-                    break;
-                }
-            }
-            break;
+            // Use memcmp for faster block comparison
+            int result = std::memcmp(key1, key2, getKeySize());
+            return (result > 0) ? 1 : ((result < 0) ? -1 : 0);
         }
 
         case KeyType::NUM_BLOCK: {
+            // Compare from most significant byte (big-endian style)
             const uint8_t* p1 = static_cast<const uint8_t*>(key1);
             const uint8_t* p2 = static_cast<const uint8_t*>(key2);
-            // Compare from most significant byte
             for (int i = getKeySize() - 1; i >= 0; --i) {
                 if (p1[i] != p2[i]) {
-                    result = (p1[i] > p2[i]) ? 1 : -1;
-                    break;
+                    return (p1[i] > p2[i]) ? 1 : -1;
                 }
             }
-            break;
+            return 0;
         }
 
         case KeyType::INTEGER: {
             int16_t v1 = *static_cast<const int16_t*>(key1);
             int16_t v2 = *static_cast<const int16_t*>(key2);
-            if (v1 > v2) result = 1;
-            else if (v1 < v2) result = -1;
-            break;
+            return (v1 > v2) ? 1 : ((v1 < v2) ? -1 : 0);
         }
 
         case KeyType::LONG_INT: {
             int32_t v1 = *static_cast<const int32_t*>(key1);
             int32_t v2 = *static_cast<const int32_t*>(key2);
-            if (v1 > v2) result = 1;
-            else if (v1 < v2) result = -1;
-            break;
+            return (v1 > v2) ? 1 : ((v1 < v2) ? -1 : 0);
         }
 
         case KeyType::STRING: {
-            result = std::strcmp(static_cast<const char*>(key1),
+            int result = std::strcmp(static_cast<const char*>(key1),
                 static_cast<const char*>(key2));
-            if (result > 0) result = 1;
-            else if (result < 0) result = -1;
-            break;
+            return (result > 0) ? 1 : ((result < 0) ? -1 : 0);
         }
 
         case KeyType::LOGICAL: {
             bool b1 = *static_cast<const char*>(key1) != 0;
             bool b2 = *static_cast<const char*>(key2) != 0;
-            if (b1 && !b2) result = 1;
-            else if (!b1 && b2) result = -1;
-            break;
+            return (b1 && !b2) ? 1 : ((!b1 && b2) ? -1 : 0);
         }
 
         case KeyType::CHARACTER: {
-            char c1 = *static_cast<const char*>(key1);
-            char c2 = *static_cast<const char*>(key2);
-            if (c1 > c2) result = 1;
-            else if (c1 < c2) result = -1;
-            break;
+            unsigned char c1 = *static_cast<const unsigned char*>(key1);
+            unsigned char c2 = *static_cast<const unsigned char*>(key2);
+            return (c1 > c2) ? 1 : ((c1 < c2) ? -1 : 0);
         }
 
         default:
-            break;
+            return 0;
         }
-
-        return result;
     }
 
     //=============================================================================
@@ -886,6 +954,7 @@ namespace udb {
 
     int64_t MultiIndex::bringLeave(int64_t leavePos, void* key)
     {
+        // Internal method - caller must hold lock
         if (leavePos == INVALID_POSITION) {
             return INVALID_POSITION;
         }
@@ -903,6 +972,7 @@ namespace udb {
 
     int64_t MultiIndex::getFirst(void* key)
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return INVALID_POSITION;
 
         if (getFirstLeave() != getLastLeave()) {
@@ -913,9 +983,10 @@ namespace udb {
 
     int64_t MultiIndex::getNext(void* key)
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return INVALID_POSITION;
 
-        if (!isEOF() && m_positions[m_currentIndex].nextLeave != INVALID_POSITION) {
+        if (!isEOFInternal() && m_positions[m_currentIndex].nextLeave != INVALID_POSITION) {
             return bringLeave(m_positions[m_currentIndex].nextLeave, key);
         }
         return INVALID_POSITION;
@@ -923,9 +994,10 @@ namespace udb {
 
     int64_t MultiIndex::getPrev(void* key)
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return INVALID_POSITION;
 
-        if (!isBOF() && m_positions[m_currentIndex].prevLeave != INVALID_POSITION) {
+        if (!isBOFInternal() && m_positions[m_currentIndex].prevLeave != INVALID_POSITION) {
             return bringLeave(m_positions[m_currentIndex].prevLeave, key);
         }
         return INVALID_POSITION;
@@ -933,6 +1005,7 @@ namespace udb {
 
     int64_t MultiIndex::getCurrent(void* key)
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return INVALID_POSITION;
         return bringLeave(m_positions[m_currentIndex].currentLeave, key);
     }
@@ -943,6 +1016,7 @@ namespace udb {
 
     bool MultiIndex::findLeave(const void* key, int64_t& leavePos)
     {
+        // Internal method - caller must hold lock
         uint16_t levelNo = getNumLevels();
         if (levelNo < 1) {
             leavePos = INVALID_POSITION;
@@ -953,18 +1027,15 @@ namespace udb {
         int64_t nodePos = getRootNode();
         bool result = false;
 
-        // Traverse to bottom level
+        // Traverse to bottom level using binary search
         while (levelNo > 1 && nodePos != INVALID_POSITION) {
             readNode(node, nodePos);
             uint16_t numItems = getNumItems(node);
-            uint16_t i = 1;
-
-            while (i <= numItems && compare(key, getNodeKey(node, i)) == 1) {
-                ++i;
-            }
-
-            if (i <= numItems) {
-                nodePos = getChildPos(node, i);
+            
+            auto [keyNo, exactMatch] = binarySearchNode(node, key, numItems);
+            
+            if (keyNo <= numItems) {
+                nodePos = getChildPos(node, keyNo);
                 --levelNo;
             }
             else {
@@ -973,19 +1044,16 @@ namespace udb {
             }
         }
 
-        // Get leaf from bottom level
+        // Get leaf from bottom level using binary search
         if (nodePos != INVALID_POSITION) {
             readNode(node, nodePos);
             uint16_t numItems = getNumItems(node);
-            uint16_t i = 1;
 
-            while (i <= numItems && compare(key, getNodeKey(node, i)) == 1) {
-                ++i;
-            }
+            auto [keyNo, exactMatch] = binarySearchNode(node, key, numItems);
 
-            if (i <= numItems) {
-                leavePos = getChildPos(node, i);
-                result = (compare(key, getNodeKey(node, i)) == 0);
+            if (keyNo <= numItems) {
+                leavePos = getChildPos(node, keyNo);
+                result = exactMatch;
             }
             else {
                 leavePos = INVALID_POSITION;
@@ -997,6 +1065,7 @@ namespace udb {
 
     int64_t MultiIndex::find(const void* key)
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return INVALID_POSITION;
 
         int64_t leavePos;
@@ -1011,6 +1080,7 @@ namespace udb {
 
     bool MultiIndex::findPath(const void* key, IndexStack& stack, int64_t& lastLevelChild)
     {
+        // Internal method - caller must hold lock
         stack.clear();
         int64_t nodePos = getRootNode();
 
@@ -1028,18 +1098,14 @@ namespace udb {
 
             if (notFirstLevel || numItems > 1) {
                 notFirstLevel = true;
-                uint16_t keyNo = 1;
-                int compResult = 0;
-
-                while (keyNo <= numItems &&
-                    (compResult = compare(key, getNodeKey(node, keyNo))) == 1) {
-                    ++keyNo;
-                }
+                
+                // Use binary search for finding key position
+                auto [keyNo, exactMatch] = binarySearchNode(node, key, numItems);
 
                 if (keyNo <= numItems) {
                     --remainLevels;
                     if (remainLevels == 0) {
-                        stack.push(nodePos, (compResult == 0) ? keyNo : 0);
+                        stack.push(nodePos, exactMatch ? keyNo : 0);
                         lastLevelChild = getChildPos(node, keyNo);
                         nodePos = INVALID_POSITION;
                     }
@@ -1081,6 +1147,7 @@ namespace udb {
 
     bool MultiIndex::append(const void* newKey, int64_t newDataPos)
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return false;
 
         IndexStack stack;
@@ -1125,7 +1192,31 @@ namespace udb {
         stack.pop(nodePos, keyNo);
 
         if (keyNo > 0) {
-            // Key exists, just update child pointer
+            // Check for UNIQUE constraint
+            bool isUniqueIdx = (m_indexInfo[m_currentIndex].attributes |
+                static_cast<uint16_t>(IndexAttribute::UNIQUE)) != 0;
+            if (isUniqueIdx) {
+                // UNIQUE index - key already exists, need to clean up the leaf we just created
+                // Remove the leaf from the chain
+                readLeave(tempLeave, nextLeavePos);
+                setPrevLeave(tempLeave, prevLeavePos);
+                writeLeave(tempLeave, nextLeavePos);
+                
+                if (prevLeavePos != INVALID_POSITION) {
+                    readLeave(tempLeave, prevLeavePos);
+                    setNextLeave(tempLeave, nextLeavePos);
+                    writeLeave(tempLeave, prevLeavePos);
+                }
+                else {
+                    setFirstLeave(nextLeavePos);
+                }
+                
+                // Return the leaf to the free list
+                freeLeave(leavePos);
+                return false;
+            }
+            
+            // Non-unique index - key already exists, update child pointer to new leaf
             readNode(node, nodePos);
             setChildPos(node, keyNo, leavePos);
             writeNode(node, nodePos);
@@ -1219,15 +1310,12 @@ namespace udb {
             setNodeKey(node, changedKeyNo, changedKeyVal);
         }
 
-        uint16_t keyNo = 1;
         uint16_t numItems = getNumItems(node);
-        int comp = 0;
+        
+        // Use binary search to find insertion point
+        auto [keyNo, exactMatch] = binarySearchNode(node, newKey, numItems);
 
-        while (keyNo <= numItems && (comp = compare(newKey, getNodeKey(node, keyNo))) == 1) {
-            ++keyNo;
-        }
-
-        if (comp == 0) {
+        if (exactMatch) {
             // Key already exists, update child pointer
             setChildPos(node, keyNo, newChildPos);
             writeNode(node, nodePos);
@@ -1297,7 +1385,7 @@ namespace udb {
         if (keyNo <= numItems) {
             insertItem(newNode, 1, getNodeKey(node, numItems), getChildPos(node, numItems));
             deleteItem(node, numItems);
-            insertItem(node, keyNo, newKey, newChildPos);
+            insertItem(newNode, keyNo, newKey, newChildPos);
         }
         else {
             insertItem(newNode, 1, newKey, newChildPos);
@@ -1352,17 +1440,15 @@ namespace udb {
         int64_t nodePos = getRootNode();
         int64_t result = INVALID_POSITION;
 
+        // Traverse using binary search
         while (levelNo > 1 && nodePos != INVALID_POSITION) {
             readNode(node, nodePos);
             uint16_t numItems = getNumItems(node);
-            uint16_t i = 1;
 
-            while (i <= numItems && compare(key, getNodeKey(node, i)) == 1) {
-                ++i;
-            }
+            auto [keyNo, exactMatch] = binarySearchNode(node, key, numItems);
 
-            if (i <= numItems) {
-                nodePos = getChildPos(node, i);
+            if (keyNo <= numItems) {
+                nodePos = getChildPos(node, keyNo);
                 --levelNo;
             }
             else {
@@ -1373,15 +1459,12 @@ namespace udb {
         if (nodePos != INVALID_POSITION) {
             readNode(node, nodePos);
             uint16_t numItems = getNumItems(node);
-            uint16_t i = 1;
 
-            while (i <= numItems && compare(key, getNodeKey(node, i)) == 1) {
-                ++i;
-            }
+            auto [keyNo, exactMatch] = binarySearchNode(node, key, numItems);
 
-            if (i <= numItems && compare(key, getNodeKey(node, i)) == 0) {
-                result = getChildPos(node, i);
-                setChildPos(node, i, newLeavePos);
+            if (keyNo <= numItems && exactMatch) {
+                result = getChildPos(node, keyNo);
+                setChildPos(node, keyNo, newLeavePos);
                 writeNode(node, nodePos);
             }
         }
@@ -1544,8 +1627,13 @@ namespace udb {
         return resultState;
     }
 
+    //=============================================================================
+    // Key-Based Delete Operations
+    //=============================================================================
+
     bool MultiIndex::deleteKey(const void* deleteKey)
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return false;
 
         int64_t leavePos = deleteKeyFromNodes(deleteKey);
@@ -1597,6 +1685,7 @@ namespace udb {
 
     int64_t MultiIndex::deleteCurrent()
     {
+        LockGuard lock(m_indexMutex);
         if (hasError()) return INVALID_POSITION;
 
         int64_t currentLeave = m_positions[m_currentIndex].currentLeave;

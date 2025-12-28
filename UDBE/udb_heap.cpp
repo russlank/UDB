@@ -2,8 +2,22 @@
  * @file udb_heap.cpp
  * @brief Implementation of the HeapFile class for dynamic record storage
  *
+ * This file contains the thread-safe implementation of heap file operations
+ * including space allocation, deallocation, and holes table management.
+ *
+ * ## Thread Safety Implementation
+ *
+ * The HeapFile class uses a two-level locking strategy:
+ * 1. **File-level lock (inherited)**: Protects basic file I/O operations
+ * 2. **Heap-level lock (m_heapMutex)**: Protects heap-specific state
+ *
+ * This design allows:
+ * - Multiple threads to safely allocate/free space concurrently
+ * - Atomic allocation: no two threads receive the same position
+ * - Safe concurrent access to holes tables
+ *
  * @author Digixoil
- * @version 2.0.0
+ * @version 2.1.0 (Thread Safety Enhancement)
  */
 
 #include "udb_heap.h"
@@ -18,6 +32,7 @@ namespace udb {
     HeapFile::HeapFile(const std::string& filename, uint16_t holesTableSize)
         : File(filename, true)
     {
+        // No need to lock - object is being constructed
         m_header.firstHolesTablePos = INVALID_POSITION;
         m_header.holesTableSize = holesTableSize;
         writeHeader();
@@ -26,12 +41,14 @@ namespace udb {
     HeapFile::HeapFile(const std::string& filename)
         : File(filename, false)
     {
+        // No need to lock - object is being constructed
         readHeader();
     }
 
     HeapFile::~HeapFile()
     {
         try {
+            LockGuard lock(m_heapMutex);
             writeHeader();
         }
         catch (...) {
@@ -56,12 +73,14 @@ namespace udb {
 
     void HeapFile::writeHeader()
     {
+        // Assumes caller holds the lock
         setHeaderChecksum();
         write(&m_header, sizeof(HeapFileHeader), 0);
     }
 
     void HeapFile::readHeader()
     {
+        // Assumes caller holds the lock (or in constructor)
         read(&m_header, sizeof(HeapFileHeader), 0);
         if (!testHeaderChecksum()) {
             setError(ErrorCode::BAD_DATA);
@@ -98,6 +117,7 @@ namespace udb {
 
     void HeapFile::writeHolesTable(const std::vector<uint8_t>& table, int64_t pos)
     {
+        // Assumes caller holds the lock
         // Need non-const copy for checksum
         auto tableCopy = table;
         setHolesTableChecksum(tableCopy);
@@ -106,6 +126,7 @@ namespace udb {
 
     void HeapFile::readHolesTable(std::vector<uint8_t>& table, int64_t pos)
     {
+        // Assumes caller holds the lock
         table.resize(getHolesTableBlockSize());
         read(table.data(), getHolesTableBlockSize(), pos);
         if (!testHolesTableChecksum(table)) {
@@ -116,6 +137,7 @@ namespace udb {
 
     int64_t HeapFile::writeNewHolesTable(std::vector<uint8_t>& table)
     {
+        // Assumes caller holds the lock
         int64_t pos = size();
         setHolesTableNextPos(table, INVALID_POSITION);
         writeHolesTable(table, pos);
@@ -175,6 +197,7 @@ namespace udb {
 
     std::optional<int64_t> HeapFile::findSuitableHole(size_t size)
     {
+        // Assumes caller holds the lock
         int64_t tablePos = m_header.firstHolesTablePos;
 
         while (tablePos != INVALID_POSITION) {
@@ -216,6 +239,7 @@ namespace udb {
 
     void HeapFile::addHole(int64_t position, size_t holeSize)
     {
+        // Assumes caller holds the lock
         int64_t tablePos = m_header.firstHolesTablePos;
         int64_t prevTablePos = INVALID_POSITION;
 
@@ -261,6 +285,10 @@ namespace udb {
 
     int64_t HeapFile::allocateSpace(size_t size)
     {
+        // Acquire the heap mutex for the entire allocation operation
+        // This ensures atomic allocation - no two threads get the same position
+        LockGuard lock(m_heapMutex);
+
         // First, try to find a suitable hole
         auto hole = findSuitableHole(size);
         if (hole.has_value()) {
@@ -273,6 +301,8 @@ namespace udb {
 
     void HeapFile::freeSpace(int64_t position, size_t size)
     {
+        // Acquire the heap mutex for the entire free operation
+        LockGuard lock(m_heapMutex);
         addHole(position, size);
     }
 

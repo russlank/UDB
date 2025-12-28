@@ -11,6 +11,8 @@ Debug/
 Release/
 x64/
 x86/
+bin/
+obj/
 *.obj
 *.exe
 *.dll
@@ -61,6 +63,11 @@ Thumbs.db
 *.pid
 *.seed
 *.pid.lock
+
+# Database/Index data files
+*.ndx
+*.idx
+test_*.dat
 
 # Test output
 /test/*.exe

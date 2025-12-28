@@ -25,37 +25,37 @@
  *        [30|50]                          [30|50]
  *       /   |   \                        /   |   \
  *   [10|20][40][60|70]               [10|20][40][60|70]
- *      ?data    ?data                   |     |     |
+ *      ↓data    ↓data                   |     |     |
  *                                      [Leaves with data pointers]
  * ```
  *
  * ## File Layout
  *
  * ```
- * ????????????????????????????????????????????????????????????????
- * ?                    MULTI-INDEX HEADER                        ?
- * ?  [checksum][numIndexes]                                      ?
- * ????????????????????????????????????????????????????????????????
- * ?                    INDEX INFO [0]                            ?
- * ?  [checksum][attributes][keyType][keySize][maxItems]...       ?
- * ????????????????????????????????????????????????????????????????
- * ?                    INDEX INFO [1]                            ?
- * ?  ... (one per index)                                         ?
- * ????????????????????????????????????????????????????????????????
- * ?                                                              ?
- * ?                    NODES AND LEAVES                          ?
- * ?              (allocated dynamically)                         ?
- * ?                                                              ?
- * ?  Free nodes are linked: [Free1] -> [Free2] -> -1             ?
- * ?  Free leaves are linked similarly                            ?
- * ?                                                              ?
- * ????????????????????????????????????????????????????????????????
+ * ┌────────────────────────────────────────────────────────────────────────┐
+ * │                    MULTI-INDEX HEADER                                  │
+ * │  [checksum][numIndexes]                                                │
+ * ├────────────────────────────────────────────────────────────────────────┤
+ * │                    INDEX INFO [0]                                      │
+ * │  [checksum][attributes][keyType][keySize][maxItems]...                 │
+ * ├────────────────────────────────────────────────────────────────────────┤
+ * │                    INDEX INFO [1]                                      │
+ * │  ... (one per index)                                                   │
+ * ├────────────────────────────────────────────────────────────────────────┤
+ * │                                                                        │
+ * │                    NODES AND LEAVES                                    │
+ * │              (allocated dynamically)                                   │
+ * │                                                                        │
+ * │  Free nodes are linked: [Free1] -> [Free2] -> -1                       │
+ * │  Free leaves are linked similarly                                      │
+ * │                                                                        │
+ * └────────────────────────────────────────────────────────────────────────┘
  * ```
  *
  * ## Key Properties
  *
- * For a B-Tree node with keys K?, K?, ..., K? and children C?, C?, ..., C?:
- * - All keys in subtree C? are ? K?
+ * For a B-Tree node with keys K₁, K₂, ..., Kₙ and children C₀, C₁, ..., Cₙ:
+ * - All keys in subtree Cᵢ are ≤ Kᵢ
  * - This enables binary search within nodes and logarithmic tree traversal
  *
  * ## Time Complexity
@@ -71,6 +71,30 @@
  *
  * - Tree height: O(log n) where base is maxItems
  * - File size: O(n) with overhead for node structure
+ *
+ * ## Thread Safety
+ *
+ * The MultiIndex class is **thread-safe** for individual operations.
+ * All public methods acquire an internal mutex before accessing state.
+ *
+ * **Thread-safe operations:**
+ * ```cpp
+ * // Thread 1                    // Thread 2
+ * index.append("A", 100);        index.append("B", 200);  // Safe
+ * index.find("A");               index.find("B");         // Safe
+ * ```
+ *
+ * **Patterns requiring external synchronization:**
+ * ```cpp
+ * // Find-then-delete must be synchronized
+ * {
+ *     std::lock_guard<RecursiveMutex> lock(index.getMutex());
+ *     int64_t pos = index.find("key");
+ *     if (pos >= 0) {
+ *         index.deleteKey("key");  // Atomic with find
+ *     }
+ * }
+ * ```
  *
  * ## Usage Example
  *
@@ -109,16 +133,13 @@
  * }
  * ```
  *
- * ## Thread Safety
- *
- * Not thread-safe. External synchronization required for concurrent access.
- *
  * @author Digixoil
- * @version 2.0.0 (Modernized for Visual Studio 2025)
+ * @version 2.1.0 (Thread Safety Enhancement)
  * @date 2025
  *
  * @see doc/btree.md for detailed algorithm documentation
  * @see udb_heap.h for data record storage
+ * @see udb_sync.h for synchronization primitives
  */
 
 #ifndef UDB_BTREE_H
@@ -205,15 +226,15 @@ namespace udb {
      *
      * ## Node Layout
      * ```
-     * ??????????????????????????????????????????????????????????????
-     * ?                     NODE HEADER (19 bytes)                 ?
-     * ?  [checksum(1)][numUsed(2)][nextNode(8)][prevNode(8)]       ?
-     * ??????????????????????????????????????????????????????????????
-     * ?  Item 1: [Key (keySize bytes)][ChildPtr (8 bytes)]         ?
-     * ?  Item 2: [Key (keySize bytes)][ChildPtr (8 bytes)]         ?
-     * ?  ...                                                       ?
-     * ?  Item N: [Key (keySize bytes)][ChildPtr (8 bytes)]         ?
-     * ??????????????????????????????????????????????????????????????
+     * ┌──────────────────────────────────────────────────────────────────────────┐
+     * │                     NODE HEADER (19 bytes)                               │
+     * │  [checksum(1)][numUsed(2)][nextNode(8)][prevNode(8)]                     │
+     * ├──────────────────────────────────────────────────────────────────────────┤
+     * │  Item 1: [Key (keySize bytes)][ChildPtr (8 bytes)]                       │
+     * │  Item 2: [Key (keySize bytes)][ChildPtr (8 bytes)]                       │
+     * │  ...                                                                     │
+     * │  Item N: [Key (keySize bytes)][ChildPtr (8 bytes)]                       │
+     * └──────────────────────────────────────────────────────────────────────────┘
      * ```
      *
      * ## Horizontal Linking
@@ -239,12 +260,12 @@ namespace udb {
      *
      * ## Leaf Layout
      * ```
-     * ??????????????????????????????????????????????????????????????
-     * ?                    LEAF HEADER (25 bytes)                  ?
-     * ?  [checksum(1)][nextLeave(8)][prevLeave(8)][dataPos(8)]     ?
-     * ??????????????????????????????????????????????????????????????
-     * ?                    KEY DATA (keySize bytes)                ?
-     * ??????????????????????????????????????????????????????????????
+     * ┌──────────────────────────────────────────────────────────────────────────┐
+     * │                    LEAF HEADER (25 bytes)                                │
+     * │  [checksum(1)][nextLeave(8)][prevLeave(8)][dataPos(8)]                   │
+     * ├──────────────────────────────────────────────────────────────────────────┤
+     * │                    KEY DATA (keySize bytes)                              │
+     * └──────────────────────────────────────────────────────────────────────────┘
      * ```
      *
      * ## Leaf Chain
@@ -252,7 +273,7 @@ namespace udb {
      * All leaves are linked in key order:
      * ```
      * [First] <-> [Leaf2] <-> [Leaf3] <-> ... <-> [EOF Leaf]
-     *    ?           ?           ?                    ?
+     *    ↓           ↓           ↓                    ↓
      *  data1       data2       data3              -1 (invalid)
      * ```
      *
@@ -331,6 +352,10 @@ namespace udb {
      *     // Process node...
      * }
      * ```
+     *
+     * ## Thread Safety
+     * This class is NOT thread-safe. It is used internally within
+     * already-synchronized operations.
      */
     class IndexStack {
     public:
@@ -379,10 +404,39 @@ namespace udb {
     //=============================================================================
 
     /**
-     * @brief Multi-index B-Tree file manager
+     * @brief Thread-safe multi-index B-Tree file manager
      *
      * This class manages a file containing multiple B-Tree indexes.
      * Each index can have different key types and configurations.
+     * All public methods are thread-safe.
+     *
+     * ## Thread Safety
+     *
+     * The MultiIndex class uses a recursive mutex to protect all operations.
+     * This means:
+     * - Individual method calls are atomic
+     * - Multiple threads can safely use the same index
+     * - Re-entrant calls (method calling another method) are safe
+     *
+     * **Thread-safe operations:**
+     * ```cpp
+     * // These can run concurrently from different threads
+     * index.append("Alice", 100);
+     * index.find("Bob");
+     * index.getFirst(key);
+     * ```
+     *
+     * **Compound operations requiring external lock:**
+     * ```cpp
+     * // Find-then-delete needs external synchronization
+     * {
+     *     std::lock_guard<RecursiveMutex> lock(index.getMutex());
+     *     int64_t pos = index.find("key");
+     *     if (pos >= 0) {
+     *         index.deleteKey("key");
+     *     }
+     * }
+     * ```
      *
      * ## Features
      *
@@ -435,21 +489,17 @@ namespace udb {
      * reduces file growth operations but uses more space upfront.
      *
      * **Recommendation**: 50-200 depending on expected data size.
-     *
-     * ## Thread Safety
-     *
-     * NOT thread-safe. For concurrent access:
-     * - Use external mutex/lock
-     * - Use one index object per thread
-     * - Use file-level locking (not implemented)
      */
-    class MultiIndex : public File {
+    class UDB_THREAD_SAFE MultiIndex : public File {
     public:
         /**
          * @brief Create a new multi-index file
          *
          * Creates a new index file with space for the specified number of indexes.
          * Each index must be initialized separately via initIndex().
+         *
+         * ## Thread Safety
+         * Constructor is not thread-safe (object not yet constructed).
          *
          * @param filename Path to the file (created/overwritten)
          * @param numIndexes Number of indexes to create (1-65535)
@@ -475,6 +525,9 @@ namespace udb {
          *
          * Opens an existing index file and reads all index metadata.
          *
+         * ## Thread Safety
+         * Constructor is not thread-safe (object not yet constructed).
+         *
          * @param filename Path to the file (must exist)
          *
          * @throws FileIOException if file cannot be opened
@@ -497,6 +550,9 @@ namespace udb {
          *
          * Ensures header and index info are written before closing.
          * Errors are caught and ignored to maintain no-throw guarantee.
+         *
+         * ## Thread Safety
+         * Destructor waits for in-progress operations to complete.
          */
         ~MultiIndex() override;
 
@@ -509,6 +565,10 @@ namespace udb {
          *
          * Sets up an index with the specified configuration. Must be called
          * once for each index after creating a new file.
+         *
+         * ## Thread Safety
+         * Thread-safe. Can be called concurrently with other operations
+         * on different indexes.
          *
          * ## Parameters Explained
          *
@@ -546,6 +606,12 @@ namespace udb {
          * All subsequent operations (append, find, delete, navigate) operate
          * on the active index. Index numbers are 1-based.
          *
+         * ## Thread Safety
+         * Thread-safe. However, if multiple threads share the same index
+         * object, they share the "current index" state. Consider using
+         * separate index objects per thread, or always set the active
+         * index before each operation.
+         *
          * @param indexNo Index number (1 to numIndexes)
          *
          * @example
@@ -561,33 +627,54 @@ namespace udb {
 
         /**
          * @brief Get the active index number
+         *
+         * ## Thread Safety
+         * Thread-safe read.
+         *
          * @return Active index number (1-based)
          */
-        uint16_t getActiveIndex() const { return m_currentIndex + 1; }
+        uint16_t getActiveIndex() const;
 
         /**
          * @brief Get total number of indexes in file
+         *
+         * ## Thread Safety
+         * Thread-safe. Value is immutable after construction.
          */
         uint16_t getNumIndexes() const { return m_header.numIndexes; }
 
         /**
          * @brief Get key type of current index
+         *
+         * ## Thread Safety
+         * Thread-safe read.
          */
         KeyType getKeyType() const;
 
         /**
          * @brief Get key size of current index
+         *
+         * ## Thread Safety
+         * Thread-safe read.
          */
         uint16_t getKeySize() const;
 
         /**
          * @brief Check if delete is allowed on current index
+         *
+         * ## Thread Safety
+         * Thread-safe read.
+         *
          * @return true if ALLOW_DELETE attribute is set
          */
         bool canDelete() const;
 
         /**
          * @brief Check if current index requires unique keys
+         *
+         * ## Thread Safety
+         * Thread-safe read.
+         *
          * @return true if UNIQUE attribute is set
          */
         bool isUnique() const;
@@ -600,6 +687,9 @@ namespace udb {
          * @brief Append a new key-data pair
          *
          * Inserts a key into the index, pointing to the specified data position.
+         *
+         * ## Thread Safety
+         * Thread-safe. Multiple threads can append concurrently.
          *
          * ## Algorithm Overview
          *
@@ -638,6 +728,9 @@ namespace udb {
          * Searches the index for the specified key. If found, positions
          * the cursor at the entry and returns the data position.
          *
+         * ## Thread Safety
+         * Thread-safe. Multiple threads can search concurrently.
+         *
          * ## Algorithm
          *
          * 1. Start at root node
@@ -662,6 +755,10 @@ namespace udb {
          * Removes all entries matching the key (for non-unique indexes,
          * there may be multiple).
          *
+         * ## Thread Safety
+         * Thread-safe, but consider using external lock if coordinating
+         * with find() to prevent race conditions.
+         *
          * ## Requirements
          *
          * - ALLOW_DELETE attribute must be set
@@ -685,6 +782,10 @@ namespace udb {
          *
          * Deletes the entry at the current cursor position.
          *
+         * ## Thread Safety
+         * Thread-safe, but cursor position may be affected by concurrent
+         * navigation operations.
+         *
          * @return Data position of deleted entry, or -1 if none
          */
         int64_t deleteCurrent();
@@ -698,6 +799,9 @@ namespace udb {
          *
          * Positions cursor at the first (smallest key) entry in the index.
          * The leaf chain makes this O(1) - just follow firstLeave pointer.
+         *
+         * ## Thread Safety
+         * Thread-safe. Sets cursor position atomically.
          *
          * @param key Buffer to receive the key (optional, can be nullptr)
          * @return Data position, or -1 if empty
@@ -719,6 +823,9 @@ namespace udb {
          * Advances cursor to the next entry in key order.
          * Uses the leaf's nextLeave pointer for O(1) operation.
          *
+         * ## Thread Safety
+         * Thread-safe, but cursor may be affected by concurrent deletes.
+         *
          * @param key Buffer to receive the key (optional)
          * @return Data position, or -1 if at end
          */
@@ -730,6 +837,9 @@ namespace udb {
          * Moves cursor to the previous entry in key order.
          * Uses the leaf's prevLeave pointer for O(1) operation.
          *
+         * ## Thread Safety
+         * Thread-safe, but cursor may be affected by concurrent deletes.
+         *
          * @param key Buffer to receive the key (optional)
          * @return Data position, or -1 if at beginning
          */
@@ -740,6 +850,9 @@ namespace udb {
          *
          * Returns data for the current cursor position without moving.
          *
+         * ## Thread Safety
+         * Thread-safe read of current position.
+         *
          * @param key Buffer to receive the key (optional)
          * @return Data position, or -1 if no current entry
          */
@@ -747,12 +860,20 @@ namespace udb {
 
         /**
          * @brief Check if at end of index
+         *
+         * ## Thread Safety
+         * Thread-safe read.
+         *
          * @return true if no more entries forward
          */
         bool isEOF() const;
 
         /**
          * @brief Check if at beginning of index
+         *
+         * ## Thread Safety
+         * Thread-safe read.
+         *
          * @return true if no more entries backward
          */
         bool isBOF() const;
@@ -763,11 +884,17 @@ namespace udb {
 
         /**
          * @brief Flush current index info to disk
+         *
+         * ## Thread Safety
+         * Thread-safe.
          */
         void flushIndex();
 
         /**
          * @brief Flush all index info to disk
+         *
+         * ## Thread Safety
+         * Thread-safe.
          */
         void flushFile();
 
@@ -776,6 +903,9 @@ namespace udb {
          *
          * Virtual to allow derived classes to implement custom comparison.
          * The default implementation handles all KeyType values.
+         *
+         * ## Thread Safety
+         * Thread-safe (no state modification).
          *
          * @param key1 First key
          * @param key2 Second key
@@ -787,6 +917,7 @@ namespace udb {
         //=========================================================================
         // Internal Helper Methods
         //=========================================================================
+        // Note: All protected/private methods assume the caller holds the lock
 
         // Size calculations
         uint16_t getNodeHeaderSize() const { return sizeof(NodeHeader); }
@@ -802,9 +933,9 @@ namespace udb {
         std::vector<uint8_t> allocateKeyBlock() const;
 
         // Checksum operations
-        void setHeaderChecksum();
+        UDB_REQUIRES_LOCK void setHeaderChecksum();
         bool testHeaderChecksum() const;
-        void setInfoChecksum(uint16_t indexNo);
+        UDB_REQUIRES_LOCK void setInfoChecksum(uint16_t indexNo);
         bool testInfoChecksum(uint16_t indexNo) const;
         void setNodeChecksum(std::vector<uint8_t>& node) const;
         bool testNodeChecksum(const std::vector<uint8_t>& node) const;
@@ -812,27 +943,27 @@ namespace udb {
         bool testLeaveChecksum(const std::vector<uint8_t>& leave) const;
 
         // File I/O
-        void writeHeader();
-        void readHeader();
-        void writeInfo();
-        void readInfo();
-        void writeAllInfo();
-        void readAllInfo();
-        void readNode(std::vector<uint8_t>& node, int64_t pos);
-        void writeNode(std::vector<uint8_t>& node, int64_t pos);
-        int64_t writeNewNode(std::vector<uint8_t>& node);
-        void readLeave(std::vector<uint8_t>& leave, int64_t pos);
-        void writeLeave(std::vector<uint8_t>& leave, int64_t pos);
-        int64_t writeNewLeave(std::vector<uint8_t>& leave);
+        UDB_REQUIRES_LOCK void writeHeader();
+        UDB_REQUIRES_LOCK void readHeader();
+        UDB_REQUIRES_LOCK void writeInfo();
+        UDB_REQUIRES_LOCK void readInfo();
+        UDB_REQUIRES_LOCK void writeAllInfo();
+        UDB_REQUIRES_LOCK void readAllInfo();
+        UDB_REQUIRES_LOCK void readNode(std::vector<uint8_t>& node, int64_t pos);
+        UDB_REQUIRES_LOCK void writeNode(std::vector<uint8_t>& node, int64_t pos);
+        UDB_REQUIRES_LOCK int64_t writeNewNode(std::vector<uint8_t>& node);
+        UDB_REQUIRES_LOCK void readLeave(std::vector<uint8_t>& leave, int64_t pos);
+        UDB_REQUIRES_LOCK void writeLeave(std::vector<uint8_t>& leave, int64_t pos);
+        UDB_REQUIRES_LOCK int64_t writeNewLeave(std::vector<uint8_t>& leave);
 
         // Node/Leave management
-        void createNodes(int64_t numNodes);
-        void createLeaves(int64_t numLeaves);
-        int64_t allocateNode();
-        int64_t allocateLeave();
-        void freeNode(int64_t nodePos);
-        void freeLeave(int64_t leavePos);
-        void createFirstNode();
+        UDB_REQUIRES_LOCK void createNodes(int64_t numNodes);
+        UDB_REQUIRES_LOCK void createLeaves(int64_t numLeaves);
+        UDB_REQUIRES_LOCK int64_t allocateNode();
+        UDB_REQUIRES_LOCK int64_t allocateLeave();
+        UDB_REQUIRES_LOCK void freeNode(int64_t nodePos);
+        UDB_REQUIRES_LOCK void freeLeave(int64_t leavePos);
+        UDB_REQUIRES_LOCK void createFirstNode();
 
         // Node access helpers
         void resetNode(std::vector<uint8_t>& node);
@@ -864,35 +995,42 @@ namespace udb {
         void deleteItem(std::vector<uint8_t>& node, uint16_t itemNo);
 
         // Position management
-        void resetPosition();
-        void setPosition(int64_t currentLeave, int64_t nextLeave, int64_t prevLeave, int64_t dataPos);
-        void setPositionFromLeave(int64_t leavePos, const std::vector<uint8_t>& leave);
-        void setEOF();
-        void resetEOF();
-        void setBOF();
-        void resetBOF();
+        UDB_REQUIRES_LOCK void resetPosition();
+        UDB_REQUIRES_LOCK void setPosition(int64_t currentLeave, int64_t nextLeave, int64_t prevLeave, int64_t dataPos);
+        UDB_REQUIRES_LOCK void setPositionFromLeave(int64_t leavePos, const std::vector<uint8_t>& leave);
+        UDB_REQUIRES_LOCK void setEOF();
+        UDB_REQUIRES_LOCK void resetEOF();
+        UDB_REQUIRES_LOCK void setBOF();
+        UDB_REQUIRES_LOCK void resetBOF();
+        UDB_REQUIRES_LOCK bool isEOFInternal() const;
+        UDB_REQUIRES_LOCK bool isBOFInternal() const;
 
         // Tree algorithms
-        bool findPath(const void* key, IndexStack& stack, int64_t& lastLevelChild);
-        bool findLeave(const void* key, int64_t& leavePos);
-        int64_t modifyLeave(const void* key, int64_t newLeavePos);
-        int64_t bringLeave(int64_t leavePos, void* key);
-        int64_t deleteKeyFromNodes(const void* deleteKey);
+        UDB_REQUIRES_LOCK bool findPath(const void* key, IndexStack& stack, int64_t& lastLevelChild);
+        UDB_REQUIRES_LOCK bool findLeave(const void* key, int64_t& leavePos);
+        UDB_REQUIRES_LOCK int64_t modifyLeave(const void* key, int64_t newLeavePos);
+        UDB_REQUIRES_LOCK int64_t bringLeave(int64_t leavePos, void* key);
+        UDB_REQUIRES_LOCK int64_t deleteKeyFromNodes(const void* deleteKey);
 
         // Insert/Remove helpers
-        int insertKey(int64_t nodePos, const void* newKey, int64_t newChildPos,
+        UDB_REQUIRES_LOCK int insertKey(int64_t nodePos, const void* newKey, int64_t newChildPos,
             uint16_t changedKeyNo, const void* changedKeyVal,
             std::vector<uint8_t>& parentKey, std::vector<uint8_t>& additionalKey,
             int64_t& additionalChildPos);
-        int removeKey(int64_t nodePos, uint16_t removeKeyNo, std::vector<uint8_t>& parentKey);
+        UDB_REQUIRES_LOCK int removeKey(int64_t nodePos, uint16_t removeKeyNo, std::vector<uint8_t>& parentKey);
+
+        // Binary search helper for optimized node traversal
+        std::pair<uint16_t, bool> binarySearchNode(const std::vector<uint8_t>& node, 
+            const void* key, uint16_t numItems) const;
 
     private:
         MultiIndexHeader m_header;              ///< File header (cached)
         std::vector<IndexInfo> m_indexInfo;     ///< All index info (cached)
         std::vector<PositionInfo> m_positions;  ///< Cursor positions per index
         uint16_t m_currentIndex = 0;            ///< Active index (0-based internally)
+        mutable RecursiveMutex m_indexMutex;    ///< Mutex for index operations
 
-        // Index property accessors
+        // Index property accessors (assume lock is held)
         int64_t getFreeNode() const;
         void setFreeNode(int64_t pos);
         int64_t getFreeLeave() const;

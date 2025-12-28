@@ -11,7 +11,7 @@
  * The File class provides:
  * 1. **Abstraction**: Hides platform-specific file I/O details
  * 2. **RAII**: Automatic resource management (file opened in constructor, closed in destructor)
- * 3. **Thread Safety**: Basic mutex protection for concurrent access
+ * 3. **Thread Safety**: Recursive mutex protection for concurrent access
  * 4. **Error Handling**: Consistent error reporting via codes and exceptions
  *
  * ## Design Decisions
@@ -25,15 +25,25 @@
  * - Exception safety
  *
  * ### Thread Safety Model
- * Each file operation acquires a mutex lock. This provides:
- * - **Safety**: No data races on the file handle
- * - **Simplicity**: Easy to understand and maintain
- * - **Limitation**: Serializes all operations (not optimal for high concurrency)
  *
- * For high-performance concurrent access, consider:
- * - Reader-writer locks (multiple readers, single writer)
- * - File regions locking
- * - Multiple file handles per thread
+ * Each file operation acquires a recursive mutex lock. This provides:
+ * - **Safety**: No data races on the file handle
+ * - **Re-entrancy**: Methods can call other methods without deadlock
+ * - **Simplicity**: Easy to understand and maintain
+ *
+ * **Important**: While individual operations are thread-safe, sequences of
+ * operations (read-modify-write) require external synchronization. Use the
+ * provided lock accessor for such scenarios:
+ *
+ * ```cpp
+ * {
+ *     std::lock_guard<udb::RecursiveMutex> lock(file.getMutex());
+ *     // Multiple operations are now atomic
+ *     auto data = file.read(...);
+ *     // ... modify data ...
+ *     file.write(data, ...);
+ * }
+ * ```
  *
  * ### Position Tracking
  * The file maintains separate read and write positions (via seekg/seekp).
@@ -72,10 +82,11 @@
  * - Compression support
  *
  * @author Digixoil
- * @version 2.0.0 (Modernized for Visual Studio 2025)
+ * @version 2.1.0 (Thread Safety Enhancement)
  * @date 2025
  *
  * @see udb_common.h for error codes and exceptions
+ * @see udb_sync.h for synchronization primitives
  * @see udb_btree.h for MultiIndex which inherits from File
  * @see udb_heap.h for HeapFile which inherits from File
  */
@@ -84,10 +95,10 @@
 #define UDB_FILE_H
 
 #include "udb_common.h"
+#include "udb_sync.h"
 #include <string>
 #include <fstream>
 #include <filesystem>
-#include <mutex>
 
 namespace udb {
 
@@ -138,11 +149,35 @@ namespace udb {
     }
 
     /**
-     * @brief Low-level file I/O class
+     * @brief Low-level file I/O class with thread-safe operations
      *
-     * This class provides basic file operations with error handling and
-     * position tracking. It's designed for binary file access with random
-     * seek capability.
+     * This class provides basic file operations with error handling,
+     * position tracking, and thread-safe access through a recursive mutex.
+     * It's designed for binary file access with random seek capability.
+     *
+     * ## Thread Safety
+     *
+     * This class is **thread-safe** for individual operations. Each public
+     * method acquires the internal mutex before accessing file state.
+     *
+     * **Safe patterns:**
+     * ```cpp
+     * // Different threads can call methods concurrently
+     * // Thread 1              // Thread 2
+     * file.write(a, 100, 0);   file.write(b, 100, 200);  // Safe
+     * file.read(&x, 4, 0);     file.read(&y, 4, 200);    // Safe
+     * ```
+     *
+     * **Patterns requiring external synchronization:**
+     * ```cpp
+     * // Read-modify-write must be externally synchronized
+     * {
+     *     std::lock_guard<RecursiveMutex> lock(file.getMutex());
+     *     file.read(&header, sizeof(header), 0);
+     *     header.count++;
+     *     file.write(&header, sizeof(header), 0);
+     * }
+     * ```
      *
      * ## Inheritance
      *
@@ -150,10 +185,11 @@ namespace udb {
      * - MultiIndex: B-Tree index files
      * - HeapFile: Variable-length record storage
      *
+     * ### Class Hierarchy
      * ```
      * File (base)
-     * ??? MultiIndex (B-Tree index)
-     * ??? HeapFile (Record storage)
+     * ├── MultiIndex (B-Tree index)
+     * └── HeapFile (Record storage)
      * ```
      *
      * ## Memory Model
@@ -171,26 +207,8 @@ namespace udb {
      * - **Constructor**: May throw FileIOException if file cannot be opened
      * - **Destructor**: No-throw (catches and ignores errors)
      * - **Operations**: May throw FileIOException on I/O errors
-     *
-     * ## Thread Safety
-     *
-     * Individual file operations are thread-safe through internal locking.
-     * However, sequences of operations (read-modify-write) require external
-     * synchronization to maintain consistency.
-     *
-     * @example
-     * ```cpp
-     * // Thread-safe for individual operations
-     * file.write(data1, size1, pos1);  // Thread 1
-     * file.write(data2, size2, pos2);  // Thread 2 (safe)
-     *
-     * // NOT thread-safe for sequences
-     * auto value = file.read(...);
-     * value++;
-     * file.write(value, ...);  // Another thread might have modified
-     * ```
      */
-    class File {
+    class UDB_THREAD_SAFE File {
     public:
         /**
          * @brief Construct a file object
@@ -206,6 +224,10 @@ namespace udb {
          * - createNew is false and file doesn't exist
          * - createNew is true and cannot create file
          * - File permissions don't allow requested mode
+         *
+         * ## Thread Safety
+         * Constructor is not thread-safe (object is not yet constructed).
+         * Do not share the filename string while constructing.
          *
          * @param filename Path to the file (relative or absolute)
          * @param createNew If true, create a new file (truncate if exists)
@@ -238,6 +260,10 @@ namespace udb {
          * Files are always closed when the File object goes out of scope,
          * even if an exception is thrown.
          *
+         * ## Thread Safety
+         * Destructor waits for any in-progress operations to complete
+         * before closing the file.
+         *
          * @note If you need to handle close errors, call close() explicitly
          *       before the destructor.
          */
@@ -253,6 +279,9 @@ namespace udb {
          * Transfers ownership of the file from another File object.
          * The source object is left in a valid but closed state.
          *
+         * ## Thread Safety
+         * Not thread-safe. Do not move a File while other threads may be using it.
+         *
          * @param other File to move from
          */
         File(File&& other) noexcept;
@@ -261,6 +290,10 @@ namespace udb {
          * @brief Move assignment operator
          *
          * Closes current file (if open) and takes ownership from another.
+         *
+         * ## Thread Safety
+         * Not thread-safe. Do not move-assign while other threads may be using
+         * either this object or the source object.
          *
          * @param other File to move from
          * @return Reference to this
@@ -272,10 +305,11 @@ namespace udb {
          *
          * Returns the current read/write position in the file.
          *
-         * @return Current position in bytes from start of file
+         * ## Thread Safety
+         * Thread-safe, but the position may change immediately after return
+         * if other threads are accessing the file.
          *
-         * @note Thread-safe but the position may change if other threads
-         *       are also accessing the file.
+         * @return Current position in bytes from start of file
          */
         int64_t position() const;
 
@@ -287,6 +321,10 @@ namespace udb {
          * ## Implementation Note
          * This seeks to end of file to determine size, then restores
          * the original position. This adds overhead but is portable.
+         *
+         * ## Thread Safety
+         * Thread-safe. The size is consistent at the moment of the call,
+         * but may change if other threads write to the file.
          *
          * @return Size of file in bytes
          */
@@ -301,6 +339,11 @@ namespace udb {
          * - SEEK_SET (0): Position relative to start of file
          * - SEEK_CUR (1): Position relative to current position
          * - SEEK_END (2): Position relative to end of file
+         *
+         * ## Thread Safety
+         * Thread-safe, but consider that other threads may change the
+         * position before you perform the next operation. For atomic
+         * seek+read or seek+write, use read() or write() with position.
          *
          * @param pos Position to seek to
          * @param origin Seek origin (SEEK_SET, SEEK_CUR, SEEK_END)
@@ -328,6 +371,9 @@ namespace udb {
          *
          * ## Error Handling
          * Throws FileIOException if the write fails (disk full, permission denied, etc.)
+         *
+         * ## Thread Safety
+         * Thread-safe. The seek and write are atomic when position is specified.
          *
          * @param buffer Data to write
          * @param size Number of bytes to write
@@ -360,6 +406,9 @@ namespace udb {
          * ## Error Handling
          * Throws FileIOException if a read error occurs (not including EOF).
          *
+         * ## Thread Safety
+         * Thread-safe. The seek and read are atomic when position is specified.
+         *
          * @param buffer Buffer to read into (must be at least 'size' bytes)
          * @param size Number of bytes to read
          * @param pos Position to read from (-1 for current position)
@@ -391,11 +440,17 @@ namespace udb {
          *
          * ## Performance Note
          * Flushing is expensive. Don't call after every write.
+         *
+         * ## Thread Safety
+         * Thread-safe.
          */
         void flush();
 
         /**
          * @brief Check if file is open and valid
+         *
+         * ## Thread Safety
+         * Thread-safe, but state may change after return.
          *
          * @return true if file is open and ready for I/O
          */
@@ -403,6 +458,9 @@ namespace udb {
 
         /**
          * @brief Get the filename
+         *
+         * ## Thread Safety
+         * Thread-safe. Filename never changes after construction.
          *
          * @return The filename or path passed to the constructor
          */
@@ -414,6 +472,9 @@ namespace udb {
          * Returns the error code from the last failed operation.
          * Returns ErrorCode::OK if no error has occurred.
          *
+         * ## Thread Safety
+         * Thread-safe read, but error state may be changed by other threads.
+         *
          * @return Current error code
          */
         ErrorCode getError() const { return m_errorCode; }
@@ -424,6 +485,9 @@ namespace udb {
          * Used internally to record errors. Can also be used by
          * derived classes.
          *
+         * ## Thread Safety
+         * Thread-safe write.
+         *
          * @param code Error code to set
          */
         void setError(ErrorCode code) { m_errorCode = code; }
@@ -433,6 +497,9 @@ namespace udb {
          *
          * Resets the error code to OK. Use this after handling an error
          * to allow subsequent operations.
+         *
+         * ## Thread Safety
+         * Thread-safe.
          */
         void clearError() { m_errorCode = ErrorCode::OK; }
 
@@ -441,9 +508,38 @@ namespace udb {
          *
          * Convenience function equivalent to `getError() != ErrorCode::OK`.
          *
+         * ## Thread Safety
+         * Thread-safe read.
+         *
          * @return true if an error has occurred
          */
         bool hasError() const { return m_errorCode != ErrorCode::OK; }
+
+        /**
+         * @brief Get the mutex for external synchronization
+         *
+         * Returns a reference to the internal mutex, allowing callers to
+         * perform compound operations atomically.
+         *
+         * ## Usage
+         * ```cpp
+         * {
+         *     std::lock_guard<RecursiveMutex> lock(file.getMutex());
+         *     // All operations here are atomic
+         *     file.read(&header, sizeof(header), 0);
+         *     header.count++;
+         *     file.write(&header, sizeof(header), 0);
+         * }
+         * ```
+         *
+         * ## Warning
+         * - Do not hold the mutex for extended periods
+         * - Do not call external code while holding the mutex
+         * - Be careful of deadlocks with other mutexes
+         *
+         * @return Reference to the internal recursive mutex
+         */
+        RecursiveMutex& getMutex() const { return m_mutex; }
 
     protected:
         /**
@@ -452,17 +548,20 @@ namespace udb {
          * Closes the file handle. Safe to call multiple times.
          * Derived classes can override to add cleanup behavior.
          *
+         * ## Thread Safety
+         * Thread-safe. Acquires the mutex before closing.
+         *
          * @note This is virtual so derived classes can add their own
          *       cleanup (e.g., writing final data).
          */
         virtual void close();
 
     private:
-        std::string m_filename;             ///< Path to the file
-        mutable std::fstream m_file;        ///< File stream (mutable for const methods)
-        mutable std::mutex m_mutex;         ///< Mutex for thread safety
-        ErrorCode m_errorCode = ErrorCode::OK;  ///< Current error state
-        bool m_isOpen = false;              ///< True if file is open
+        std::string m_filename;                     ///< Path to the file
+        mutable std::fstream m_file;                ///< File stream (mutable for const methods)
+        mutable RecursiveMutex m_mutex;             ///< Recursive mutex for thread safety
+        ErrorCode m_errorCode = ErrorCode::OK;      ///< Current error state
+        bool m_isOpen = false;                      ///< True if file is open
     };
 
 } // namespace udb

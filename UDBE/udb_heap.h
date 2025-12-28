@@ -30,18 +30,18 @@
  * ### Visual Layout
  *
  * ```
- * ???????????????????????????????????????????????????????????????????
- * ?                        FILE HEADER                              ?
- * ?  [checksum][firstHolesTablePos][holesTableSize]                ?
- * ???????????????????????????????????????????????????????????????????
- * ?  Record 1  ?  HOLE (deleted)  ?  Record 2  ?  Record 3  ? ...  ?
- * ???????????????????????????????????????????????????????????????????
- * ?                     HOLES TABLE 1                               ?
- * ?  [checksum][numUsed][nextTablePos]                             ?
- * ?  [hole: pos=X, size=Y] [hole: pos=A, size=B] ...               ?
- * ???????????????????????????????????????????????????????????????????
- * ?                     HOLES TABLE 2 (if needed)                   ?
- * ???????????????????????????????????????????????????????????????????
+ * ┌────────────────────────────────────────────────────────────────────────┐
+ * │                        FILE HEADER                                     │
+ * │  [checksum][firstHolesTablePos][holesTableSize]                        │
+ * ├────────────────────────────────────────────────────────────────────────┤
+ * │  Record 1  │  HOLE (deleted)  │  Record 2  │  Record 3  │ ...          │
+ * ├────────────────────────────────────────────────────────────────────────┤
+ * │                     HOLES TABLE 1                                      │
+ * │  [checksum][numUsed][nextTablePos]                                     │
+ * │  [hole: pos=X, size=Y] [hole: pos=A, size=B] ...                       │
+ * ├────────────────────────────────────────────────────────────────────────┤
+ * │                     HOLES TABLE 2 (if needed)                          │
+ * └────────────────────────────────────────────────────────────────────────┘
  * ```
  *
  * ## Space Management
@@ -81,6 +81,28 @@
  * heap.freeSpace(pos, recordSize);  // Important: must know size!
  * ```
  *
+ * ## Thread Safety
+ *
+ * The HeapFile class is **thread-safe** for individual operations.
+ * All public methods acquire an internal mutex before accessing state.
+ *
+ * **Safe patterns:**
+ * ```cpp
+ * // Thread 1                          // Thread 2
+ * auto pos1 = heap.allocateSpace(100); auto pos2 = heap.allocateSpace(200);
+ * heap.write(data1, 100, pos1);        heap.write(data2, 200, pos2);
+ * ```
+ *
+ * **Patterns requiring external synchronization:**
+ * ```cpp
+ * // Allocate-then-write must be synchronized if order matters
+ * {
+ *     std::lock_guard<RecursiveMutex> lock(heap.getMutex());
+ *     int64_t pos = heap.allocateSpace(size);
+ *     heap.write(data, size, pos);
+ * }
+ * ```
+ *
  * ## Limitations
  *
  * 1. **No size tracking**: Application must track record sizes
@@ -96,10 +118,11 @@
  * - Size prefix in records
  *
  * @author Digixoil
- * @version 2.0.0 (Modernized for Visual Studio 2025)
+ * @version 2.1.0 (Thread Safety Enhancement)
  * @date 2025
  *
  * @see udb_btree.h for the B-Tree index that provides key-to-position mapping
+ * @see udb_sync.h for synchronization primitives
  * @see doc/heap-file.md for detailed algorithm documentation
  */
 
@@ -182,17 +205,17 @@ namespace udb {
      *
      * ## Structure
      * ```
-     * ????????????????????????????????????????????
-     * ? HolesTableHeader (11 bytes)              ?
-     * ?   checksum (1)                           ?
-     * ?   numUsed (2)                            ?
-     * ?   nextTablePos (8)                       ?
-     * ????????????????????????????????????????????
-     * ? HoleRecord[0] (16 bytes)                 ?
-     * ? HoleRecord[1] (16 bytes)                 ?
-     * ? ...                                      ?
-     * ? HoleRecord[holesTableSize-1]             ?
-     * ????????????????????????????????????????????
+     * ┌──────────────────────────────────────────────┐
+     * │ HolesTableHeader (11 bytes)                  │
+     * │   checksum (1)                               │
+     * │   numUsed (2)                                │
+     * │   nextTablePos (8)                           │
+     * ├──────────────────────────────────────────────┤
+     * │ HoleRecord[0] (16 bytes)                     │
+     * │ HoleRecord[1] (16 bytes)                     │
+     * │ ...                                          │
+     * │ HoleRecord[holesTableSize-1]                 │
+     * └──────────────────────────────────────────────┘
      * ```
      *
      * ## Linked List
@@ -217,12 +240,38 @@ namespace udb {
     //=============================================================================
 
     /**
-     * @brief Heap-structured file for variable-length record storage
+     * @brief Thread-safe heap-structured file for variable-length record storage
      *
      * The HeapFile class extends the basic File class to provide:
      * - Allocation and deallocation of variable-size records
      * - Free space management through holes tables
      * - Space reuse when records are deleted
+     * - Thread-safe operations for concurrent access
+     *
+     * ## Thread Safety
+     *
+     * All public methods are thread-safe. The class uses the inherited mutex
+     * from File plus an internal mutex for heap-specific state.
+     *
+     * **Thread-safe operations:**
+     * - allocateSpace(): Atomically finds or creates space
+     * - freeSpace(): Atomically adds hole to tracking tables
+     * - All inherited File operations (read, write, etc.)
+     *
+     * **Multi-threaded usage example:**
+     * ```cpp
+     * HeapFile heap("data.heap", 100);
+     *
+     * // Thread 1
+     * int64_t pos1 = heap.allocateSpace(sizeof(Record1));
+     * Record1 r1 = {...};
+     * heap.write(&r1, sizeof(r1), pos1);
+     *
+     * // Thread 2 (can run concurrently)
+     * int64_t pos2 = heap.allocateSpace(sizeof(Record2));
+     * Record2 r2 = {...};
+     * heap.write(&r2, sizeof(r2), pos2);
+     * ```
      *
      * ## Typical Usage Pattern
      *
@@ -274,11 +323,6 @@ namespace udb {
      * heap.freeSpace(pos, sizeof(size) + size);
      * ```
      *
-     * ## Thread Safety
-     *
-     * Individual operations are thread-safe (via File's mutex).
-     * For sequences (allocate-write), use external synchronization.
-     *
      * ## Performance Characteristics
      *
      * | Operation | Time Complexity |
@@ -296,7 +340,7 @@ namespace udb {
      * - Hole coalescing (not implemented)
      * - Use fixed-size records when possible
      */
-    class HeapFile : public File {
+    class UDB_THREAD_SAFE HeapFile : public File {
     public:
         /**
          * @brief Create a new heap file
@@ -314,6 +358,9 @@ namespace udb {
          * | Large (200+) | Fast search | Wastes space if few holes |
          *
          * **Recommendation**: 100 is a good default for most applications.
+         *
+         * ## Thread Safety
+         * Constructor is not thread-safe (object not yet constructed).
          *
          * @param filename Path to the file
          * @param holesTableSize Number of entries per holes table (default: 100)
@@ -337,6 +384,9 @@ namespace udb {
          * Opens an existing heap file and reads its header to obtain
          * the holes table configuration.
          *
+         * ## Thread Safety
+         * Constructor is not thread-safe (object not yet constructed).
+         *
          * @param filename Path to the file
          *
          * @throws FileIOException if file cannot be opened
@@ -359,6 +409,9 @@ namespace udb {
          *
          * Ensures the header is written before closing to persist
          * any changes to the holes table pointers.
+         *
+         * ## Thread Safety
+         * Destructor waits for in-progress operations to complete.
          */
         ~HeapFile() override;
 
@@ -382,6 +435,10 @@ namespace udb {
          *
          * The returned position is where you should write your data.
          * The file is NOT automatically extended; it grows when you write.
+         *
+         * ## Thread Safety
+         * Thread-safe. Atomic allocation - no two threads will receive
+         * the same position.
          *
          * @param size Number of bytes needed
          * @return Position where the record can be written
@@ -419,6 +476,9 @@ namespace udb {
          * 2. If found: add hole record to that table
          * 3. If not found: create new holes table, add hole
          *
+         * ## Thread Safety
+         * Thread-safe. Multiple threads can free space concurrently.
+         *
          * @param position Start position of the record
          * @param size Size of the record in bytes
          *
@@ -443,6 +503,9 @@ namespace udb {
          *
          * Returns the number of hole records that fit in each holes table.
          * This is set at file creation and cannot be changed.
+         *
+         * ## Thread Safety
+         * Thread-safe. Value is immutable after construction.
          *
          * @return Number of entries per holes table
          */
@@ -482,20 +545,24 @@ namespace udb {
          * @brief Write the file header to disk
          *
          * Calculates checksum and writes header at position 0.
+         *
+         * @note Caller must hold the mutex
          */
-        void writeHeader();
+        UDB_REQUIRES_LOCK void writeHeader();
 
         /**
          * @brief Read and verify the file header
          *
          * @throws DataCorruptionException if checksum fails
+         * @note Caller must hold the mutex
          */
-        void readHeader();
+        UDB_REQUIRES_LOCK void readHeader();
 
         /**
          * @brief Calculate and set header checksum
+         * @note Caller must hold the mutex
          */
-        void setHeaderChecksum();
+        UDB_REQUIRES_LOCK void setHeaderChecksum();
 
         /**
          * @brief Verify header checksum
@@ -523,23 +590,26 @@ namespace udb {
          * @brief Write a holes table to disk
          * @param table The holes table data
          * @param pos Position to write at
+         * @note Caller must hold the mutex
          */
-        void writeHolesTable(const std::vector<uint8_t>& table, int64_t pos);
+        UDB_REQUIRES_LOCK void writeHolesTable(const std::vector<uint8_t>& table, int64_t pos);
 
         /**
          * @brief Read a holes table from disk
          * @param table Output: the holes table data
          * @param pos Position to read from
          * @throws DataCorruptionException if checksum fails
+         * @note Caller must hold the mutex
          */
-        void readHolesTable(std::vector<uint8_t>& table, int64_t pos);
+        UDB_REQUIRES_LOCK void readHolesTable(std::vector<uint8_t>& table, int64_t pos);
 
         /**
          * @brief Write a new holes table at end of file
          * @param table The holes table data
          * @return Position where table was written
+         * @note Caller must hold the mutex
          */
-        int64_t writeNewHolesTable(std::vector<uint8_t>& table);
+        UDB_REQUIRES_LOCK int64_t writeNewHolesTable(std::vector<uint8_t>& table);
 
         /**
          * @brief Reset a holes table to empty state
@@ -607,8 +677,9 @@ namespace udb {
          *
          * @param size Requested allocation size
          * @return Position if found, std::nullopt if no suitable hole
+         * @note Caller must hold the mutex
          */
-        std::optional<int64_t> findSuitableHole(size_t size);
+        UDB_REQUIRES_LOCK std::optional<int64_t> findSuitableHole(size_t size);
 
         /**
          * @brief Add a hole to the holes table chain
@@ -617,14 +688,16 @@ namespace udb {
          *
          * @param position Start position of the hole
          * @param size Size of the hole
+         * @note Caller must hold the mutex
          */
-        void addHole(int64_t position, size_t size);
+        UDB_REQUIRES_LOCK void addHole(int64_t position, size_t size);
 
         //=========================================================================
         // Member Data
         //=========================================================================
 
-        HeapFileHeader m_header;    ///< File header (cached in memory)
+        HeapFileHeader m_header;            ///< File header (cached in memory)
+        mutable RecursiveMutex m_heapMutex; ///< Mutex for heap-specific operations
     };
 
 } // namespace udb
