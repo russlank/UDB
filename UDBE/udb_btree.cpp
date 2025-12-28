@@ -55,9 +55,16 @@ namespace udb {
             }
         }
         
-        // At this point, left is the position where key should be inserted
-        // Check if it's an exact match
+        // At this point, left is the candidate position
+        // Check if key fits at this position
         int finalCmp = compare(key, getNodeKey(node, left));
+        
+        if (finalCmp > 0) {
+            // key > nodeKey[left], so key belongs after position 'left'
+            // For insertion, this means position left+1
+            // For search, this still means position left+1 (to find the first key >= search key)
+            return { static_cast<uint16_t>(left + 1), false };
+        }
         
         return { left, finalCmp == 0 };
     }
@@ -758,9 +765,11 @@ namespace udb {
         else {
             insertAt = itemNo;
             // Use memmove for efficient bulk shift
+            // We need to shift items from insertAt..numItems to (insertAt+1)..(numItems+1)
+            // Source is item at insertAt, destination is item at insertAt+1
             uint16_t itemSize = getItemSize();
-            uint8_t* dest = node.data() + sizeof(NodeHeader) + (itemSize * insertAt);
             uint8_t* src = node.data() + sizeof(NodeHeader) + (itemSize * (insertAt - 1));
+            uint8_t* dest = node.data() + sizeof(NodeHeader) + (itemSize * insertAt);
             size_t bytesToMove = itemSize * (numItems - insertAt + 1);
             std::memmove(dest, src, bytesToMove);
         }
@@ -1192,8 +1201,9 @@ namespace udb {
         stack.pop(nodePos, keyNo);
 
         if (keyNo > 0) {
-            // Check for UNIQUE constraint
-            bool isUniqueIdx = (m_indexInfo[m_currentIndex].attributes |
+            // Key already exists in tree - check for UNIQUE constraint
+            // FIX: Use bitwise AND (&) not OR (|) to check the attribute flag
+            bool isUniqueIdx = (m_indexInfo[m_currentIndex].attributes &
                 static_cast<uint16_t>(IndexAttribute::UNIQUE)) != 0;
             if (isUniqueIdx) {
                 // UNIQUE index - key already exists, need to clean up the leaf we just created
@@ -1383,11 +1393,15 @@ namespace udb {
         resetNode(newNode);
 
         if (keyNo <= numItems) {
+            // New key goes into left node (current node)
+            // First move last item from node to newNode
             insertItem(newNode, 1, getNodeKey(node, numItems), getChildPos(node, numItems));
             deleteItem(node, numItems);
-            insertItem(newNode, keyNo, newKey, newChildPos);
+            // Then insert new key into node at correct position
+            insertItem(node, keyNo, newKey, newChildPos);
         }
         else {
+            // New key goes into right node (new node)
             insertItem(newNode, 1, newKey, newChildPos);
         }
 
