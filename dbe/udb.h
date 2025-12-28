@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file udb.h
  * @brief Main include file for the UDB (Ultra Database) library
  *

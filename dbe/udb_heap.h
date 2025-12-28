@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file udb_heap.h
  * @brief Heap-structured file for dynamic record storage
  *

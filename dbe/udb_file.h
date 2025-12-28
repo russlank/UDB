@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file udb_file.h
  * @brief Low-level file I/O abstraction for the UDB library
  *
