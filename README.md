@@ -1,5 +1,7 @@
 # UDB - Ultra Database Engine
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-%23FFDD00.svg?&style=flat&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/russlank)
+
 A lightweight, high-performance B-Tree indexing engine with dynamic heap-structured record storage implementation.
 
 ## 📋 Overview
